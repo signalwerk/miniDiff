@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Diff icon tuner</title>
+<style>
+  :root {
+    --ground: #f3f4f6;
+    --panel: #ffffff;
+    --text: #1c2330;
+    --muted: #5b6575;
+    --line: #d5d9e0;
+    --accent: #1f6f4a;
+    --accent-text: #ffffff;
+    --stage-light: #ffffff;
+    --stage-dark: #1b1f27;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #14171d;
+      --panel: #1d2129;
+      --text: #e8ebf0;
+      --muted: #a2abb8;
+      --line: #343a46;
+      --accent: #58c492;
+      --accent-text: #0e1a14;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #14171d;
+    --panel: #1d2129;
+    --text: #e8ebf0;
+    --muted: #a2abb8;
+    --line: #343a46;
+    --accent: #58c492;
+    --accent-text: #0e1a14;
+  }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Helvetica, sans-serif;
+    font-size: 16px;
+    line-height: 1.45;
+  }
+  main {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 28px 20px 40px;
+  }
+  h1 { font-size: 1.5rem; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .lede { margin: 0 0 24px; color: var(--muted); max-width: 62ch; }
+  .layout { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  .preview { flex: 1 1 380px; min-width: 0; }
+  .controls { flex: 1 1 380px; min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+
+  .stage {
+    background: var(--stage-light);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 28px;
+  }
+  .stage.dark { background: var(--stage-dark); }
+  .frame {
+    /* dashed outline = the 1000 x 1000 square the icon must fill */
+    outline: 1px dashed #8a93a3;
+    aspect-ratio: 1 / 1;
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto;
+  }
+  .frame svg, .sizes svg { display: block; width: 100%; height: 100%; }
+  .sizes { display: flex; align-items: flex-end; gap: 20px; margin-top: 24px; justify-content: center; }
+  .sizes figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .sizes figcaption { font-size: 0.75rem; color: #8a93a3; font-variant-numeric: tabular-nums; }
+  .preview-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+  .facts { margin: 0; color: var(--muted); font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+
+  fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 18px; }
+  legend { padding: 0; font-weight: 600; margin-bottom: 12px; }
+  .field { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: baseline; }
+  .field label { font-size: 0.9375rem; }
+  .field output { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.9375rem; }
+  .field input[type="range"] { grid-column: 1 / -1; width: 100%; height: 44px; margin: 0; accent-color: var(--accent); }
+  .field small { grid-column: 1 / -1; color: var(--muted); font-size: 0.8125rem; }
+
+  .code-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .code-head h2 { font-size: 1rem; font-weight: 600; margin: 0; }
+  textarea {
+    width: 100%;
+    height: 240px;
+    resize: vertical;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    white-space: pre;
+    overflow: auto;
+  }
+  button {
+    font: inherit;
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .status { min-height: 1.4em; margin: 6px 0 0; font-size: 0.875rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Diff icon tuner</h1>
+  <p class="lede">Two A4-shaped pages (1 : √2), tilted by a calculated angle so that together they fill the 1000 × 1000 square exactly. The equals sign stays upright on top.</p>
+
+  <div class="layout">
+    <section class="preview" aria-label="Preview">
+      <div class="stage" id="stage">
+        <div class="frame" id="frame"></div>
+        <div class="sizes" aria-label="Small sizes">
+          <figure><div id="s64" style="width:64px;height:64px"></div><figcaption>64</figcaption></figure>
+          <figure><div id="s32" style="width:32px;height:32px"></div><figcaption>32</figcaption></figure>
+          <figure><div id="s16" style="width:16px;height:16px"></div><figcaption>16</figcaption></figure>
+        </div>
+      </div>
+      <div class="preview-bar">
+        <p class="facts" id="facts"></p>
+        <button type="button" id="bgToggle">Show on dark</button>
+      </div>
+    </section>
+
+    <section class="controls">
+      <fieldset>
+        <legend>Shape</legend>
+        <div class="field">
+          <label for="overlap">Overlap size</label>
+          <output id="overlapOut" for="overlap"></output>
+          <input type="range" id="overlap" min="30" max="95" step="1" value="75">
+          <small>How much of each page's width and height is shared.</small>
+        </div>
+        <div class="field">
+          <label for="eq">Size of equals sign</label>
+          <output id="eqOut" for="eq"></output>
+          <input type="range" id="eq" min="100" max="600" step="5" value="300">
+          <small>Width of the bars, in icon units.</small>
+        </div>
+        <div class="field">
+          <label for="radius">Corner radius</label>
+          <output id="radiusOut" for="radius"></output>
+          <input type="range" id="radius" min="0" max="50" step="1" value="22">
+          <small>As a share of the page width. It cannot exceed the shift between the pages or the shared width, so a large overlap limits it.</small>
+        </div>
+      </fieldset>
+
+      <div>
+        <div class="code-head">
+          <h2><label for="code">SVG code</label></h2>
+          <button type="button" class="primary" id="copy">Copy SVG</button>
+        </div>
+        <textarea id="code" readonly spellcheck="false"></textarea>
+        <p class="status" id="status" role="status"></p>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+// ---------------------------------------------------------------------------
+// Settings you may want to change by hand
+// ---------------------------------------------------------------------------
+var SIZE = 1000;                 // the icon covers SIZE x SIZE units
+var COLOR_OLD = '#DC3D43';       // first page (removed)
+var COLOR_NEW = '#3DBB7A';       // second page (added)
+var COLOR_SAME = '#5F6B7A';      // overlap (unchanged)
+var COLOR_EQUALS = '#FFFFFF';
+var EQ_BAR = 0.25;               // bar thickness as a share of the bar width
+var EQ_GAP = 0.22;               // gap between the bars as a share of the bar width
+
+// ---------------------------------------------------------------------------
+// Geometry
+//   overlap   0..1  share of a page's width and height that both pages cover
+//   radiusRel 0..0.5 corner radius as a share of the page width
+// A page is 1 x sqrt(2). The second page is shifted along the page diagonal,
+// so the overlap is 1 : sqrt(2) as well. Both pages are then rotated by the
+// angle at which their common bounding box is square, and scaled to SIZE.
+// ---------------------------------------------------------------------------
+function computeLayout(overlap, radiusRel) {
+  var w = 1, h = Math.SQRT2;
+  var dx = (1 - overlap) * w;
+  var dy = (1 - overlap) * h;
+  // The shared area is drawn as a box with two rounded corners. That is only
+  // exact while the radius is no larger than the shift between the pages and
+  // no larger than the shared width, so the radius is limited to that.
+  var rMax = Math.min(0.5 * w, dx, w - dx);
+  var r = Math.min(radiusRel * w, rMax);
+
+  // Bounding box of both rotated, rounded pages for a rotation of a radians.
+  function box(a) {
+    var cos = Math.cos(a), sin = Math.sin(a);
+    var c = Math.abs(cos), s = Math.abs(sin);
+    var sx = dx * cos - dy * sin;            // rotated shift between the pages
+    var sy = dx * sin + dy * cos;
+    return {
+      width:  Math.abs(sx) + (w - 2 * r) * c + (h - 2 * r) * s + 2 * r,
+      height: Math.abs(sy) + (w - 2 * r) * s + (h - 2 * r) * c + 2 * r,
+      sx: sx, sy: sy
+    };
+  }
+
+  // Upright the box is taller than wide; at -45 degrees it is wider than tall.
+  // Bisect for the angle in between where width equals height.
+  var lo = -Math.PI / 4, hi = 0;
+  for (var i = 0; i < 60; i++) {
+    var mid = (lo + hi) / 2;
+    var b = box(mid);
+    if (b.width - b.height > 0) { lo = mid; } else { hi = mid; }
+  }
+  var angle = (lo + hi) / 2;
+  var fit = box(angle);
+  var scale = SIZE / fit.width;
+
+  return {
+    angle: angle,
+    scale: scale,
+    pageW: w * scale,
+    pageH: h * scale,
+    radius: r * scale,
+    radiusRel: r / w,
+    radiusLimited: radiusRel * w > rMax + 1e-9,
+    shiftX: dx * scale,
+    shiftY: dy * scale,
+    center1: { x: SIZE / 2 - fit.sx * scale / 2, y: SIZE / 2 - fit.sy * scale / 2 },
+    center2: { x: SIZE / 2 + fit.sx * scale / 2, y: SIZE / 2 + fit.sy * scale / 2 }
+  };
+}
+
+function num(v) { return String(Math.round(v * 100) / 100); }
+
+// The whole icon as SVG text: two rounded rects (old page, new page) and the
+// shared area as a box with two rounded corners, all inside one rotated group,
+// plus the two bars of the equals sign.
+function buildSvg(overlap, radiusRel, eqWidth) {
+  var g = computeLayout(overlap, radiusRel);
+  var mid = SIZE / 2;
+  var r = g.radius;
+  // Positions before rotation: both pages together are centred on the icon.
+  var x1 = mid - (g.pageW + g.shiftX) / 2;
+  var y1 = mid - (g.pageH + g.shiftY) / 2;
+  var x2 = x1 + g.shiftX;
+  var y2 = y1 + g.shiftY;
+  var page = function (x, y, fill) {
+    return '    <rect x="' + num(x) + '" y="' + num(y) + '" width="' + num(g.pageW) +
+      '" height="' + num(g.pageH) + '" rx="' + num(r) + '" fill="' + fill + '"/>';
+  };
+
+  // Shared area: left/top edges come from the new page, right/bottom edges
+  // from the old page. Only its top-left and bottom-right corners are round.
+  var left = x2, top = y2, right = x1 + g.pageW, bottom = y1 + g.pageH;
+  var shared;
+  if (r <= 0.005) {
+    shared = 'M' + num(left) + ',' + num(top) + ' H' + num(right) + ' V' + num(bottom) + ' H' + num(left) + ' Z';
+  } else {
+    var arc = ' A' + num(r) + ',' + num(r) + ' 0 0 1 ';
+    shared = 'M' + num(left + r) + ',' + num(top) +
+      ' H' + num(right) + ' V' + num(bottom - r) + arc + num(right - r) + ',' + num(bottom) +
+      ' H' + num(left) + ' V' + num(top + r) + arc + num(left + r) + ',' + num(top) + ' Z';
+  }
+
+  var barH = eqWidth * EQ_BAR;
+  var gap = eqWidth * EQ_GAP;
+  var bar = function (y) {
+    return '  <rect x="' + num(mid - eqWidth / 2) + '" y="' + num(y) + '" width="' + num(eqWidth) +
+      '" height="' + num(barH) + '" rx="' + num(barH / 2) + '" fill="' + COLOR_EQUALS + '"/>';
+  };
+  return [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + SIZE + ' ' + SIZE + '" width="' + SIZE + '" height="' + SIZE + '">',
+    '  <g transform="rotate(' + num(g.angle * 180 / Math.PI) + ' ' + mid + ' ' + mid + ')">',
+    '    <!-- old page -->',
+    page(x1, y1, COLOR_OLD),
+    '    <!-- new page -->',
+    page(x2, y2, COLOR_NEW),
+    '    <!-- shared area -->',
+    '    <path d="' + shared + '" fill="' + COLOR_SAME + '"/>',
+    '  </g>',
+    '  <!-- equals sign -->',
+    bar(mid - gap / 2 - barH),
+    bar(mid + gap / 2),
+    '</svg>'
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Page wiring
+// ---------------------------------------------------------------------------
+var el = function (id) { return document.getElementById(id); };
+
+function render() {
+  var overlap = Number(el('overlap').value) / 100;
+  var radiusRel = Number(el('radius').value) / 100;
+  var eqWidth = Number(el('eq').value);
+  var g = computeLayout(overlap, radiusRel);
+
+  el('overlapOut').textContent = Math.round(overlap * 100) + '%';
+  el('radiusOut').textContent = (g.radiusLimited
+    ? 'limited to ' + Math.round(g.radiusRel * 100) + '%'
+    : Math.round(radiusRel * 100) + '%') + ' = ' + num(g.radius) + ' units';
+  el('eqOut').textContent = eqWidth + ' units';
+  el('facts').textContent = 'Tilt ' + num(Math.abs(g.angle) * 180 / Math.PI) +
+    '° anticlockwise, page ' + num(g.pageW) + ' × ' + num(g.pageH);
+
+  el('code').value = buildSvg(overlap, radiusRel, eqWidth);
+  el('frame').innerHTML = buildSvg(overlap, radiusRel, eqWidth);
+  el('s64').innerHTML = buildSvg(overlap, radiusRel, eqWidth);
+  el('s32').innerHTML = buildSvg(overlap, radiusRel, eqWidth);
+  el('s16').innerHTML = buildSvg(overlap, radiusRel, eqWidth);
+  el('status').textContent = '';
+}
+
+function copySvg() {
+  var area = el('code');
+  var done = function () { el('status').textContent = 'Copied the SVG code.'; };
+  var manual = function () {
+    area.focus();
+    area.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    if (ok) { done(); }
+    else { el('status').textContent = 'Copying is blocked here. The code is selected: press Ctrl+C or Cmd+C.'; }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(area.value).then(done, manual);
+  } else {
+    manual();
+  }
+}
+
+['overlap', 'radius', 'eq'].forEach(function (id) { el(id).addEventListener('input', render); });
+el('copy').addEventListener('click', copySvg);
+el('bgToggle').addEventListener('click', function () {
+  var dark = el('stage').classList.toggle('dark');
+  el('bgToggle').textContent = dark ? 'Show on light' : 'Show on dark';
+});
+render();
+</script>
+</body>
+</html>
