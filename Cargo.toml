@@ -1,0 +1,58 @@
+[package]
+name = "minidiff"
+version = "0.1.0"
+edition = "2024"
+description = "A fast, native diff & merge tool for files and folders (egui + tree-sitter)"
+license = "MIT"
+default-run = "minidiff"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+    "wayland",
+    "x11",
+] }
+egui = "0.36"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+similar = "2"
+
+# Syntax highlighting
+tree-sitter = "0.27"
+tree-sitter-highlight = "0.27"
+tree-sitter-bash = "0.25"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-css = "0.25"
+tree-sitter-go = "0.25"
+tree-sitter-html = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-javascript = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-md = "0.5"
+tree-sitter-python = "0.25"
+tree-sitter-ruby = "0.23"
+tree-sitter-rust = "0.24"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-typescript = "0.23"
+tree-sitter-yaml = "0.7"
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
+rfd = "0.17"
+sha2 = "0.11"
+ureq = { version = "3", features = ["json"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+# Tree-sitter grammars are big C state machines: optimise them even in dev builds,
+# otherwise highlighting large files gets sluggish.
+[profile.dev.package."*"]
+opt-level = 2
+

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<dict>
+		<key>ApplicationIdentifier</key>
+		<string>ch.signalwerk.minidiff</string>
+		<key>ApplicationName</key>
+		<string>MiniDiff</string>
+		<key>DisplayName</key>
+		<string>MiniDiff</string>
+		<key>LaunchScript</key>
+		<string>minidiff.sh</string>
+		<key>Identifier</key>
+		<string>minidiff</string>
+		<key>SupportsMergeTool</key>
+		<true/>
+		<key>SupportsDiffChangeset</key>
+		<true/>
+	</dict>
+</array>
+</plist>

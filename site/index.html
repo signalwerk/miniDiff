@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MiniDiff</title>
+  <meta name="description" content="MiniDiff compares files and folders and resolves merge conflicts. A fast native macOS app with syntax highlighting." />
+  <link rel="icon" href="favicon.png" />
+  <style>
+    :root {
+      --bg: #ffffff; --fg: #1f2328; --dim: #656d76; --card: #f6f7f9; --border: #d8dce1;
+      --accent: #0969da; --accent-fg: #ffffff; --add: #1a7f37; --del: #cf222e; --code: #eef0f3;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1216; --fg: #d5dbe3; --dim: #8a939f; --card: #161a20; --border: #2a3038;
+        --accent: #4c9aff; --accent-fg: #0f1216; --add: #3fb950; --del: #f85149; --code: #1b2027;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--fg);
+      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    }
+    a { color: var(--accent); }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+    header { text-align: center; padding: 72px 0 40px; }
+    header img.logo { width: 112px; height: 112px; }
+    h1 { font-size: 44px; line-height: 1.1; margin: 16px 0 8px; letter-spacing: -0.02em; }
+    .tagline { font-size: 20px; color: var(--dim); margin: 0 auto 28px; max-width: 560px; }
+    .download {
+      display: inline-flex; align-items: center; gap: 10px; padding: 14px 26px; border-radius: 12px;
+      background: var(--accent); color: var(--accent-fg); font-weight: 600; font-size: 17px; text-decoration: none;
+    }
+    .download:hover { filter: brightness(1.08); }
+    .meta { color: var(--dim); font-size: 14px; margin-top: 12px; }
+    .meta a { color: var(--dim); }
+    section { padding: 36px 0; }
+    h2 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.01em; }
+    .lead { color: var(--dim); margin: 0 0 18px; }
+    .shot {
+      width: 100%; height: auto; display: block; border-radius: 12px; border: 1px solid var(--border);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+    .card h3 { margin: 0 0 6px; font-size: 17px; }
+    .card p { margin: 0; color: var(--dim); font-size: 15px; }
+    pre {
+      background: var(--code); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+      overflow-x: auto; font: 13.5px/1.5 "SF Mono", ui-monospace, Menlo, monospace;
+    }
+    .note { color: var(--dim); font-size: 14px; }
+    footer { border-top: 1px solid var(--border); margin-top: 40px; padding: 24px 0 48px; color: var(--dim); font-size: 14px; }
+    footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
+    @media (max-width: 760px) {
+      header { padding: 48px 0 24px; }
+      h1 { font-size: 34px; }
+      .tagline { font-size: 17px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header class="wrap">
+    <img class="logo" src="img/icon.png" alt="" width="112" height="112" />
+    <h1>MiniDiff</h1>
+    <p class="tagline">Compare files and folders and resolve merge conflicts, with syntax highlighting, in a fast native app.</p>
+    <a class="download" id="download" href="https://github.com/signalwerk/miniDiff/releases/latest/download/MiniDiff-macos-universal.zip">
+      <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1a.75.75 0 0 1 .75.75v6.69l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 0 1 1.06-1.06l2.22 2.22V1.75A.75.75 0 0 1 8 1ZM2.75 12.5h10.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5Z"/></svg>
+      Download for macOS
+    </a>
+    <p class="meta">
+      <span id="version">Latest release</span> · Apple Silicon &amp; Intel · macOS 11+ ·
+      <a href="https://github.com/signalwerk/miniDiff">Source on GitHub</a>
+    </p>
+  </header>
+
+  <main class="wrap">
+    <section>
+      <h2>File diff</h2>
+      <p class="lead">Side by side or unified, with tree-sitter syntax highlighting and word-level changes.</p>
+      <img class="shot" src="img/file.png" alt="Side-by-side diff of two Rust files" loading="lazy" />
+    </section>
+
+    <section>
+      <h2>Folder diff</h2>
+      <p class="lead">Drop two folders on the app icon. Browse what changed, was added or removed, then drill down into any file.</p>
+      <img class="shot" src="img/folder.png" alt="Folder comparison with a file tree and a diff" loading="lazy" />
+    </section>
+
+    <section>
+      <h2>Merge conflicts</h2>
+      <p class="lead">Three-way merge: non-conflicting changes merge automatically. For each conflict, pick A, B, both, the base, or edit the result by hand.</p>
+      <img class="shot" src="img/merge.png" alt="Three-way merge view with a conflict" loading="lazy" />
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <h3>Drop to compare</h3>
+        <p>Drop two files or folders on the window or the Dock icon, or run <code>minidiff a b</code>.</p>
+      </div>
+      <div class="card">
+        <h3>Works with Tower &amp; git</h3>
+        <p>Use it as the diff and merge tool. It exits successfully only when you saved the merge.</p>
+      </div>
+      <div class="card">
+        <h3>Keyboard first</h3>
+        <p><code>n</code>/<code>p</code> jump between changes; <code>a</code>/<code>b</code> resolve conflicts; <code>⌘S</code> saves.</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Set up</h2>
+      <p class="lead">Unzip, move <strong>MiniDiff.app</strong> to Applications and open it once with right-click → Open. The app updates itself after that.</p>
+      <pre><code># ~/.gitconfig
+[diff]
+    tool = minidiff
+[difftool "minidiff"]
+    cmd = /Applications/MiniDiff.app/Contents/MacOS/minidiff \"$LOCAL\" \"$REMOTE\"
+[merge]
+    tool = minidiff
+[mergetool "minidiff"]
+    cmd = /Applications/MiniDiff.app/Contents/MacOS/minidiff --merge \"$LOCAL\" \"$REMOTE\" \"$BASE\" \"$MERGED\"
+    trustExitCode = true</code></pre>
+      <p class="note">For Tower, see the <a href="https://github.com/signalwerk/miniDiff#use-from-tower">setup in the README</a>.
+        MiniDiff focuses on text diffing and merging. Linux and Windows builds are available on request:
+        <a href="https://github.com/signalwerk/miniDiff/issues">open an issue</a> if you'd like to beta-test.</p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>MiniDiff · MIT License · created with the assistance of LLM agents</span>
+      <a href="https://github.com/signalwerk/miniDiff">github.com/signalwerk/miniDiff</a>
+    </div>
+  </footer>
+
+  <script>
+    // Show the current version (from the same manifest the app's updater reads).
+    fetch("update.json", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((m) => {
+        if (!m || !m.version) return;
+        document.getElementById("version").textContent = "Version " + m.version;
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+# Builds and publishes a release when a version tag (vX.Y.Z) is pushed.
+# Create tags with scripts/release.sh, which also bumps Cargo.toml.
+#
+#   1. macOS universal MiniDiff.app → GitHub Release asset (zip + sha256)
+#   2. Landing page (site/)          → gh-pages (https://minidiff.signalwerk.ch)
+#   3. update.json on gh-pages       → read by the app's self-updater
+#
+# The zip has a fixed name so https://github.com/<repo>/releases/latest/download/
+# MiniDiff-macos-universal.zip always points at the newest build.
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  DOMAIN: minidiff.signalwerk.ch
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Tag must match Cargo.toml
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CARGO=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$TAG" != "$CARGO" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $CARGO"
+            exit 1
+          fi
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: version
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release
+      - name: Build universal app bundle
+        run: scripts/bundle-macos.sh universal
+      - name: Zip
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          cd target/release/bundle
+          ZIP="MiniDiff-macos-universal.zip"
+          ditto -c -k --sequesterRsrc --keepParent MiniDiff.app "$ZIP"
+          shasum -a 256 "$ZIP" | cut -d' ' -f1 > "$ZIP.sha256"
+          mkdir -p "$GITHUB_WORKSPACE/out" && mv "$ZIP" "$ZIP.sha256" "$GITHUB_WORKSPACE/out/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: out/
+
+  publish:
+    needs: [version, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos
+          path: macos
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: MiniDiff ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            macos/*.zip
+            macos/*.sha256
+      - name: Update manifest
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          ZIP="MiniDiff-macos-universal.zip"
+          SHA=$(cat "macos/$ZIP.sha256")
+          cat > site/update.json <<EOF
+          {
+            "version": "$VERSION",
+            "notes_url": "https://github.com/$REPO/releases/tag/v$VERSION",
+            "macos": {
+              "url": "https://github.com/$REPO/releases/download/v$VERSION/$ZIP",
+              "sha256": "$SHA"
+            }
+          }
+          EOF
+          cat site/update.json
+      - name: Deploy landing page to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: site
+          cname: ${{ env.DOMAIN }}
+          force_orphan: true
+          commit_message: Deploy v${{ needs.version.outputs.version }}
