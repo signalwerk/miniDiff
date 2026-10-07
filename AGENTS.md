@@ -123,8 +123,10 @@ scripts/screenshots.py                            # macOS native captures → si
   GitHub Release, and deploys `site/` + generated `update.json` + CNAME
   `minidiff.signalwerk.ch` directly with the official Pages actions. Pages uses
   Actions (`build_type: workflow`), with `pages: write` / `id-token: write`.
+  The `github-pages` environment allows the `main` branch and `v*` tags.
 - The app fetches `https://minidiff.signalwerk.ch/update.json`, verifies the SHA-256, swaps the
   `.app` via `ditto` next to the bundle, then relaunches with `open -n`.
+- The repository is public and the custom domain has enforced HTTPS.
 - The app is ad-hoc signed, not notarized. `cargo test published_release -- --ignored`
-  verifies the public manifest, checksum, and real bundle replacement in a temporary
+  verifies the public manifest, checksum, universal architectures, and real bundle replacement in a temporary
   directory after publishing a release (requires network and macOS).

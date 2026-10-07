@@ -211,6 +211,7 @@ mod tests {
     #[ignore = "requires a published release and network access"]
     fn published_release() {
         let manifest = fetch_manifest().expect("public HTTPS update manifest");
+        assert_eq!(manifest.version, CURRENT, "published manifest must match the checked-out release");
         assert!(is_newer(&manifest.version, "0.0.0"));
         let asset = manifest.macos.expect("macOS release asset");
         let zip = download(&asset).expect("public release download with matching SHA-256");
@@ -223,6 +224,11 @@ mod tests {
         let output = std::process::Command::new(&executable).arg("--version").output().unwrap();
         assert!(output.status.success());
         assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), format!("minidiff {}", manifest.version));
+        let output = std::process::Command::new("/usr/bin/lipo").arg("-archs").arg(&executable).output().unwrap();
+        assert!(output.status.success());
+        let architectures = String::from_utf8(output.stdout).unwrap();
+        assert!(architectures.split_whitespace().any(|a| a == "arm64"));
+        assert!(architectures.split_whitespace().any(|a| a == "x86_64"));
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
         std::fs::remove_dir_all(root).unwrap();
     }
