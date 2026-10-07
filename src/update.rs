@@ -208,6 +208,27 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    #[ignore = "requires a published release and network access"]
+    fn published_release() {
+        let manifest = fetch_manifest().expect("public HTTPS update manifest");
+        assert!(is_newer(&manifest.version, "0.0.0"));
+        let asset = manifest.macos.expect("macOS release asset");
+        let zip = download(&asset).expect("public release download with matching SHA-256");
+        let root = std::env::temp_dir().join(format!("minidiff-published-test-{}", std::process::id()));
+        let bundle = root.join("MiniDiff.app");
+        let executable = bundle.join("Contents/MacOS/minidiff");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, "old version").unwrap();
+        replace_bundle(&bundle, &zip).expect("install real release into disposable bundle");
+        let output = std::process::Command::new(&executable).arg("--version").output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), format!("minidiff {}", manifest.version));
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn swaps_bundle() {
         let root = std::env::temp_dir().join(format!("minidiff-update-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);

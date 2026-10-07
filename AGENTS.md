@@ -121,10 +121,10 @@ scripts/screenshots.py                            # macOS native captures → si
   (`scripts/release.sh` handles this).
 - CI builds a universal app, uploads the fixed-name `MiniDiff-macos-universal.zip` and its `.sha256` to the
   GitHub Release, and deploys `site/` + generated `update.json` + CNAME
-  `minidiff.signalwerk.ch` to `gh-pages` (`force_orphan`).
+  `minidiff.signalwerk.ch` directly with the official Pages actions. Pages uses
+  Actions (`build_type: workflow`), with `pages: write` / `id-token: write`.
 - The app fetches `https://minidiff.signalwerk.ch/update.json`, verifies the SHA-256, swaps the
   `.app` via `ditto` next to the bundle, then relaunches with `open -n`.
-- **Current state (2026-10-07):** the repo is private, so updates and the download link
-  won't work until it is public. No release has been cut yet; GitHub Pages must be
-  enabled once after the first release (source: `gh-pages`). The app is ad-hoc
-  signed, not notarized.
+- The app is ad-hoc signed, not notarized. `cargo test published_release -- --ignored`
+  verifies the public manifest, checksum, and real bundle replacement in a temporary
+  directory after publishing a release (requires network and macOS).

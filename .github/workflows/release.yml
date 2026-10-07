@@ -2,8 +2,8 @@
 # Create tags with scripts/release.sh, which also bumps Cargo.toml.
 #
 #   1. macOS universal MiniDiff.app → GitHub Release asset (zip + sha256)
-#   2. Landing page (site/)          → gh-pages (https://minidiff.signalwerk.ch)
-#   3. update.json on gh-pages       → read by the app's self-updater
+#   2. Landing page (site/)          → GitHub Pages (https://minidiff.signalwerk.ch)
+#   3. update.json on GitHub Pages       → read by the app's self-updater
 #
 # The zip has a fixed name so https://github.com/<repo>/releases/latest/download/
 # MiniDiff-macos-universal.zip always points at the newest build.
@@ -71,6 +71,13 @@ jobs:
   publish:
     needs: [version, macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -103,12 +110,14 @@ jobs:
           }
           EOF
           cat site/update.json
-      - name: Deploy landing page to gh-pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Custom domain
+        run: echo "$DOMAIN" > site/CNAME
+      - name: Upload landing page and update manifest
+        uses: actions/upload-pages-artifact@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: site
-          cname: ${{ env.DOMAIN }}
-          force_orphan: true
-          commit_message: Deploy v${{ needs.version.outputs.version }}
+          path: site
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

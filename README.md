@@ -192,7 +192,8 @@ creates the tag `vX.Y.Z`. Then it pushes `main` and the tag. Only version tags t
 
 1. builds the universal `MiniDiff.app` and attaches
    `MiniDiff-macos-universal.zip` and its `.sha256` to a GitHub Release;
-2. deploys the landing page (`site/`) and `update.json` to the `gh-pages` branch.
+2. deploys the landing page (`site/`) and `update.json` directly to GitHub Pages
+   through the release workflow.
 
 The app reads `https://minidiff.signalwerk.ch/update.json` to find new versions.
 Release assets must be downloadable without login, so the repository has to be

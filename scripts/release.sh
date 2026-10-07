@@ -1,7 +1,7 @@
 #!/bin/sh
 # Cut a release: bump the version, commit, tag vX.Y.Z and push.
 # The tag triggers .github/workflows/release.yml, which builds the macOS app,
-# publishes the GitHub Release, deploys the landing page and update.json to gh-pages.
+# publishes the GitHub Release, deploys the landing page and update.json to GitHub Pages.
 #
 #   scripts/release.sh 0.2.0          # explicit version
 #   scripts/release.sh patch|minor|major
