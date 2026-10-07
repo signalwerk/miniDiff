@@ -8,13 +8,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 pub const MANIFEST_URL: &str = "https://minidiff.signalwerk.ch/update.json";
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
+const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Manifest {
@@ -45,12 +46,14 @@ pub enum State {
 
 pub struct Updater {
     state: Arc<Mutex<State>>,
+    last_check: Instant,
 }
 
 impl Updater {
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(State::Idle)),
+            last_check: Instant::now(),
         }
     }
 
@@ -63,10 +66,11 @@ impl Updater {
         ctx.request_repaint();
     }
 
-    pub fn check(&self, ctx: &egui::Context) {
+    pub fn check(&mut self, ctx: &egui::Context) {
         if matches!(self.state(), State::Checking | State::Installing(_) | State::Installed(_)) {
             return;
         }
+        self.last_check = Instant::now();
         Self::set(&self.state, ctx, State::Checking);
         let (state, ctx) = (self.state.clone(), ctx.clone());
         std::thread::spawn(move || {
@@ -77,6 +81,19 @@ impl Updater {
             };
             Self::set(&state, &ctx, next);
         });
+    }
+
+    fn next_check_in(&self, now: Instant) -> Duration {
+        CHECK_INTERVAL.saturating_sub(now.saturating_duration_since(self.last_check))
+    }
+
+    /// Wake even an idle app at the daily deadline. Busy installs are preserved.
+    pub fn check_automatically(&mut self, ctx: &egui::Context) {
+        if self.next_check_in(Instant::now()).is_zero() {
+            self.check(ctx);
+        }
+        let delay = self.next_check_in(Instant::now());
+        ctx.request_repaint_after(if delay.is_zero() { Duration::from_secs(60) } else { delay });
     }
 
     /// Whether this process can replace itself (running from a .app bundle on macOS).
@@ -205,6 +222,26 @@ pub fn relaunch(bundle: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn daily_checks_wait_for_deadline_and_preserve_active_updates() {
+        let ctx = egui::Context::default();
+        let mut updater = Updater::new();
+        let start = updater.last_check;
+        assert_eq!(updater.next_check_in(start), CHECK_INTERVAL);
+        assert_eq!(updater.next_check_in(start + CHECK_INTERVAL - Duration::from_secs(1)), Duration::from_secs(1));
+        assert!(updater.next_check_in(start + CHECK_INTERVAL).is_zero());
+        assert!(updater.next_check_in(start + CHECK_INTERVAL * 2).is_zero());
+        updater.last_check = Instant::now() - CHECK_INTERVAL;
+        for state in [State::Checking, State::Installing(Manifest {
+            version: "9.0.0".into(), notes_url: None, macos: None,
+        }), State::Installed(PathBuf::from("MiniDiff.app"))] {
+            *updater.state.lock().unwrap() = state.clone();
+            updater.check_automatically(&ctx);
+            assert_eq!(std::mem::discriminant(&updater.state()), std::mem::discriminant(&state));
+            assert!(updater.next_check_in(Instant::now()).is_zero());
+        }
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

@@ -73,6 +73,7 @@ struct DiffWindow {
     slots: [Option<Entry>; 2],
     toast: Option<(String, bool, f64)>,
     close_dialog: bool,
+    about_open: bool,
     close_after_merge: bool,
     closed: bool,
     title: String,
@@ -86,6 +87,7 @@ impl DiffWindow {
             slots: [None, None],
             toast: None,
             close_dialog: false,
+            about_open: false,
             close_after_merge: false,
             closed: false,
             title: String::new(),
@@ -213,6 +215,10 @@ impl AppState {
     }
 
     fn handle_root_events(&mut self, ctx: &egui::Context) {
+        if self.settings.auto_update && self.root.iter().chain(self.windows.iter())
+            .any(|w| !w.closed && !matches!(w.screen, Screen::Merge(_))) {
+            self.updater.check_automatically(ctx);
+        }
         for incoming in std::mem::take(&mut self.requests) {
             self.route_incoming(incoming, ctx);
         }
@@ -567,7 +573,7 @@ impl WindowUi<'_> {
         egui::Panel::top("app-bar").frame(frame).show(ui, |ui| {
             ui.horizontal(|ui| {
                 let (logo, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
-                welcome::paint_logo(ui.painter(), logo.center(), 22.0, pal);
+                welcome::paint_logo(ui.painter(), logo.center(), 22.0);
                 let name =
                     ui.add(egui::Label::new(RichText::new("MiniDiff").strong().size(14.0)).sense(Sense::click()));
                 if resp.clicked() || name.clicked() {
@@ -585,6 +591,16 @@ impl WindowUi<'_> {
                     }
                     if ui.button(format!("Close Window    {}W", cmd())).clicked() {
                         self.request_close();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("About MiniDiff").clicked() {
+                        self.window.about_open = true;
+                        ui.close();
+                    }
+                    if ui.button("Check for Updates...").clicked() {
+                        *self.manual_check = true;
+                        self.updater.check(ui.ctx());
                         ui.close();
                     }
                 });
@@ -794,7 +810,7 @@ impl WindowUi<'_> {
                 ui.close();
             }
         });
-        ui.checkbox(&mut self.settings.auto_update, "Check for updates on startup");
+        ui.checkbox(&mut self.settings.auto_update, "Check for updates automatically (startup and every 24 hours)");
     }
 
     /// Update pill in the app bar (native only).
@@ -960,6 +976,20 @@ impl WindowUi<'_> {
         }
         self.toast_ui(&ctx);
         self.close_dialog_ui(&ctx);
+        if self.window.about_open {
+            let response = egui::Modal::new(Id::new("about-minidiff")).show(&ctx, |ui| {
+                ui.set_min_width(260.0);
+                ui.heading("About MiniDiff");
+                ui.label(format!("Version {}", crate::update::CURRENT));
+                ui.label("A native text diff and merge tool for macOS.");
+                ui.hyperlink_to("MiniDiff homepage", "https://minidiff.signalwerk.ch/");
+                ui.separator();
+                ui.button("Close").clicked()
+            });
+            if response.inner || response.should_close() {
+                self.window.about_open = false;
+            }
+        }
 
         // The controller removes only this viewport after the merge guard.
         if ctx.input(|i| i.viewport().close_requested()) {
@@ -1179,6 +1209,44 @@ mod tests {
             entries: vec![a, b],
             slot: None,
         }
+    }
+
+    #[test]
+    fn about_overlay_shows_running_version_and_escape_closes_it() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.root.as_mut().unwrap().about_open = true;
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| root_ui(&mut app).ui(ui));
+            output.textures_delta.clear();
+        }
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            root_ui(&mut app).ui(ui);
+        });
+        output.textures_delta.clear();
+        fn texts(shape: &egui::epaint::Shape, labels: &mut Vec<String>) {
+            match shape {
+                egui::epaint::Shape::Text(text) => labels.push(text.galley.text().to_owned()),
+                egui::epaint::Shape::Vec(shapes) => for shape in shapes { texts(shape, labels); },
+                _ => {}
+            }
+        }
+        let mut labels = Vec::new();
+        for shape in output.shapes { texts(&shape.shape, &mut labels); }
+        assert!(labels.iter().any(|text| text == "About MiniDiff"));
+        assert!(labels.iter().any(|text| text == &format!("Version {}", crate::update::CURRENT)));
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: Key::Escape, physical_key: None, pressed: true, repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            root_ui(&mut app).ui(ui);
+        });
+        output.textures_delta.clear();
+        assert!(!app.root.as_ref().unwrap().about_open);
     }
 
     #[test]

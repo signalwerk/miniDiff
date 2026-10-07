@@ -4,8 +4,24 @@ use egui::{Color32, CornerRadius, Stroke, Theme};
 
 use crate::highlight::Hl;
 
+mod brand {
+    include!("../assets/icon-colors.rs");
+}
+
 const fn hex(rgb: u32) -> Color32 {
     Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+}
+
+/// Derive readable theme shades and diff fills from the icon's red and green.
+const fn tint(colour: u32, background: u32, percent: u32) -> Color32 {
+    const fn channel(colour: u32, background: u32, percent: u32, shift: u32) -> u8 {
+        ((((colour >> shift) & 255) * percent + ((background >> shift) & 255) * (100 - percent)) / 100) as u8
+    }
+    Color32::from_rgb(
+        channel(colour, background, percent, 16),
+        channel(colour, background, percent, 8),
+        channel(colour, background, percent, 0),
+    )
 }
 
 pub struct Palette {
@@ -117,14 +133,14 @@ pub static DARK: Palette = Palette {
     filler: hex(0x13161b),
     fold_bg: hex(0x182029),
 
-    add_fg: hex(0x3fb950),
-    add_bg: hex(0x12261b),
-    add_gutter: hex(0x173322),
-    add_emph: hex(0x1f5f33),
-    del_fg: hex(0xf85149),
-    del_bg: hex(0x2d1619),
-    del_gutter: hex(0x3a1b1f),
-    del_emph: hex(0x7a2a2f),
+    add_fg: hex(brand::GREEN),
+    add_bg: tint(brand::GREEN, 0x0f1216, 12),
+    add_gutter: tint(brand::GREEN, 0x0f1216, 20),
+    add_emph: tint(brand::GREEN, 0x0f1216, 45),
+    del_fg: tint(brand::RED, 0xffffff, 85),
+    del_bg: tint(brand::RED, 0x0f1216, 12),
+    del_gutter: tint(brand::RED, 0x0f1216, 20),
+    del_emph: tint(brand::RED, 0x0f1216, 45),
     mod_fg: hex(0xd29922),
 
     local: hex(0x4c9aff),
@@ -155,14 +171,14 @@ pub static LIGHT: Palette = Palette {
     filler: hex(0xf3f4f6),
     fold_bg: hex(0xeaf2fb),
 
-    add_fg: hex(0x1a7f37),
-    add_bg: hex(0xe6ffec),
-    add_gutter: hex(0xccffd8),
-    add_emph: hex(0xabf2bc),
-    del_fg: hex(0xcf222e),
-    del_bg: hex(0xffebe9),
-    del_gutter: hex(0xffd7d5),
-    del_emph: hex(0xffc1c0),
+    add_fg: tint(brand::GREEN, 0x000000, 60),
+    add_bg: tint(brand::GREEN, 0xffffff, 10),
+    add_gutter: tint(brand::GREEN, 0xffffff, 20),
+    add_emph: tint(brand::GREEN, 0xffffff, 35),
+    del_fg: tint(brand::RED, 0x000000, 90),
+    del_bg: tint(brand::RED, 0xffffff, 10),
+    del_gutter: tint(brand::RED, 0xffffff, 20),
+    del_emph: tint(brand::RED, 0xffffff, 35),
     mod_fg: hex(0x9a6700),
 
     local: hex(0x0969da),

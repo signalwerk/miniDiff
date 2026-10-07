@@ -174,6 +174,9 @@ def main():
         executable = bundle / "MacOS/minidiff"
         executable.parent.mkdir(parents=True)
         shutil.copy2(binary, executable)
+        resources = bundle / "Resources"
+        resources.mkdir()
+        shutil.copy2(ROOT / "assets/MiniDiff.icns", resources / "MiniDiff.icns")
         with (ROOT / "macos/Info.plist").open("rb") as source:
             plist = plistlib.load(source)
         plist["CFBundleIdentifier"] = "ch.signalwerk.minidiff.screenshots"

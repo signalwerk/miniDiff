@@ -38,16 +38,8 @@ cp "$BIN" "$APP/Contents/MacOS/minidiff"
 sed "s/__VERSION__/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# Icon: render the iconset from assets/icon-1024.png.
-ICONSET=target/release/bundle/MiniDiff.iconset
-rm -rf "$ICONSET" && mkdir -p "$ICONSET"
-for s in 16 32 128 256 512; do
-  sips -z $s $s assets/icon-1024.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-  d=$((s * 2))
-  sips -z $d $d assets/icon-1024.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
-done
-iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/MiniDiff.icns"
-rm -rf "$ICONSET"
+# Generated locally from assets/icon.svg; CI needs no SVG renderer.
+cp assets/MiniDiff.icns "$APP/Contents/Resources/MiniDiff.icns"
 
 # Ad-hoc signature so Gatekeeper / Apple Events treat the bundle consistently.
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true

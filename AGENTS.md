@@ -34,7 +34,7 @@ cargo test                                   # unit tests (diff, merge, highligh
 cargo clippy                                 # keep at zero warnings
 scripts/bundle-macos.sh [universal] [--install]   # → target/release/bundle/MiniDiff.app
 scripts/release.sh patch|minor|major|X.Y.Z        # bump, tag vX.Y.Z, push → CI release
-scripts/make_icon.py                              # regenerate assets/icon-*.png (stdlib only)
+scripts/make-icons.sh                             # SVG → app/site icons + colours (resvg, macOS)
 scripts/screenshots.py                            # macOS native captures → site/img/ (880×520 pt)
 ```
 
@@ -60,6 +60,11 @@ scripts/screenshots.py                            # macOS native captures → si
   Apple Event handler.
 - `src/update.rs`: self-updater. `src/theme.rs`: palettes (order of `Hl` must
   match the syntax colour arrays).
+- `assets/icon.svg`: icon source; `deleted-page` / `added-page` fills generate
+  `assets/icon-colors.rs` for semantic diff colours. `scripts/make-icons.sh` uses
+  resvg and iconutil; commit generated PNGs/ICNS so CI needs no renderer.
+  Native bundles, toolbar/welcome logos, and website icons share these assets.
+  The website uses the copied SVG directly for its logo and favicon.
 - `integrations/tower/`, `scripts/install-tower.sh`: Tower custom tool
   (`LOCAL REMOTE [BASE MERGED]`).
 - `site/`: landing page; `.github/workflows/release.yml`: release pipeline.
@@ -104,7 +109,12 @@ scripts/screenshots.py                            # macOS native captures → si
   `NSApplicationWillFinishLaunchingNotification`; it must run before `run_native`.
   Test with `open -a target/release/bundle/MiniDiff.app a b`.
 - **Merge-tool exit code:** 1 until the result is saved and unchanged since
-  (`MergeView.saved && !unsaved`); git/Tower rely on it. No update check in merge mode.
+  (`MergeView.saved && !unsaved`); git/Tower rely on it. Automatic update checks
+  pause while only merge views are open; explicit File-menu checks still work.
+- **Updates:** File menu has an About version modal and a manual update check.
+  Automatic checks run on startup and every 24 hours (shared across windows,
+  monotonic clock, logic-frame timer); respect `auto_update` and never interrupt
+  checking/installing/installed states. Restart guards unsaved merges in all windows.
 - **Grammar crates:** they must match tree-sitter 0.27, and their constant names vary
   (`HIGHLIGHT_QUERY` vs `HIGHLIGHTS_QUERY`). After upgrading, `all_queries_compile` must pass.
 - **Persisted settings** live in `~/Library/Application Support/MiniDiff/app.ron`

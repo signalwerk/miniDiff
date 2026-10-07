@@ -20,27 +20,19 @@ pub enum WelcomeAction {
     DemoMerge,
 }
 
-/// The MiniDiff logo: two overlapping documents.
-pub fn paint_logo(p: &Painter, center: Pos2, size: f32, pal: &Palette) {
-    let w = size * 0.52;
-    let h = size * 0.68;
-    let a = Rect::from_center_size(center + vec2(-size * 0.13, -size * 0.06), vec2(w, h));
-    let b = Rect::from_center_size(center + vec2(size * 0.13, size * 0.06), vec2(w, h));
-    let r = CornerRadius::same((size * 0.09) as u8);
-    p.rect_filled(a, r, pal.del_fg);
-    p.rect_filled(b, r, pal.add_fg);
-    p.rect_stroke(b, r, Stroke::new(size * 0.04, pal.bg), egui::StrokeKind::Outside);
-    let line = |rect: Rect, i: f32, frac: f32| {
-        let y = rect.top() + rect.height() * (0.28 + i * 0.16);
-        let x0 = rect.left() + rect.width() * 0.18;
-        p.line_segment(
-            [pos2(x0, y), pos2(x0 + rect.width() * 0.64 * frac, y)],
-            Stroke::new(size * 0.045, Color32::from_white_alpha(220)),
-        );
-    };
-    for (i, f) in [(0.0, 1.0), (1.0, 0.7), (2.0, 0.85), (3.0, 0.5)] {
-        line(b, i, f);
-    }
+/// Paint the same rendered SVG icon used by the native bundle and website.
+pub fn paint_logo(p: &Painter, center: Pos2, size: f32) {
+    let id = egui::Id::new("minidiff-icon-texture");
+    let texture = p.ctx().data_mut(|data| data.get_temp::<egui::TextureHandle>(id)).unwrap_or_else(|| {
+        let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../assets/icon-256.png"))
+            .expect("generated icon PNG");
+        let image = egui::ColorImage::from_rgba_unmultiplied([icon.width as usize, icon.height as usize], &icon.rgba);
+        let texture = p.ctx().load_texture("minidiff-icon", image, egui::TextureOptions::LINEAR);
+        p.ctx().data_mut(|data| data.insert_temp(id, texture.clone()));
+        texture
+    });
+    p.image(texture.id(), Rect::from_center_size(center, vec2(size, size)),
+        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
 }
 
 fn dashed_rect(p: &Painter, rect: Rect, stroke: Stroke) {
@@ -71,7 +63,7 @@ pub fn ui(
         ui.add_space(top_pad);
         ui.vertical_centered(|ui| {
             let (logo, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
-            paint_logo(ui.painter(), logo.center(), 64.0, pal);
+            paint_logo(ui.painter(), logo.center(), 64.0);
             ui.add_space(6.0);
             ui.label(RichText::new("MiniDiff").size(30.0).strong().color(pal.text));
             ui.label(

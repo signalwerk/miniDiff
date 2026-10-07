@@ -159,6 +159,23 @@ scripts/bundle-macos.sh universal           # arm64 + x86_64 (rustup target add 
 
 Ignored when walking folders: `.git`, `.DS_Store`, `node_modules`, `.hg`, `.svn`.
 
+### Icon assets
+
+On macOS, install the SVG renderer and regenerate the app and website assets:
+
+```sh
+brew install resvg
+scripts/make-icons.sh
+```
+
+`assets/icon.svg` is the source. The script uses `resvg` to render the PNGs,
+packages the macOS `.icns` with `iconutil`, copies the SVG for website logos and
+the favicon, and reads the `deleted-page` and
+`added-page` fills into generated Rust colour constants. The app derives its
+red/green diff colours from those fills and uses the rendered icon in its UI.
+Python 3 and the macOS command-line tools are also required. Run the script after
+editing the SVG and commit the generated assets; release builds use them directly.
+
 ### Landing-page screenshots
 
 On macOS, regenerate all three images with:
@@ -194,6 +211,12 @@ creates the tag `vX.Y.Z`. Then it pushes `main` and the tag. Only version tags t
    `MiniDiff-macos-universal.zip` and its `.sha256` to a GitHub Release;
 2. deploys the landing page (`site/`) and `update.json` directly to GitHub Pages
    through the release workflow.
+
+Use **File → About MiniDiff** for version information and **File → Check for
+Updates...** to check manually. Automatic checks run on startup and every 24 hours
+while the app is open; the help menu lets you turn them off. Automatic checks are
+paused when only merge views are open. Available updates offer installation and
+restart in the app bar, with unsaved merges protected before restart.
 
 The app reads `https://minidiff.signalwerk.ch/update.json` to find new versions.
 Release assets must be downloadable without login, so the repository has to be

@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000">
   <g transform="rotate(-26.96 500 500)">
     <!-- old page -->
-    <rect x="145.69" y="-1.07" width="566.9" height="801.71" rx="124.72" fill="#DC3D43"/>
+    <rect id="deleted-page" x="145.69" y="-1.07" width="566.9" height="801.71" rx="124.72" fill="#DC3D43"/>
     <!-- new page -->
-    <rect x="287.41" y="199.36" width="566.9" height="801.71" rx="124.72" fill="#3DBB7A"/>
+    <rect id="added-page" x="287.41" y="199.36" width="566.9" height="801.71" rx="124.72" fill="#3DBB7A"/>
     <!-- shared area -->
     <path d="M412.13,199.36 H712.59 V675.92 A124.72,124.72 0 0 1 587.87,800.64 H287.41 V324.08 A124.72,124.72 0 0 1 412.13,199.36 Z" fill="#5F6B7A"/>
   </g>
