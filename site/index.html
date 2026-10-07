@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MiniDiff — text diffs &amp; merges for macOS</title>
+  <meta name="description" content="Compare files, explore changed folders, and work through merges. MiniDiff is a small native macOS app for text diffs and merges." />
+  <link rel="icon" href="favicon.png" />
+  <link rel="preconnect" href="https://fonts.signalwerk.ch" crossorigin />
+  <link rel="stylesheet" href="https://fonts.signalwerk.ch/css/latest/family=IBM+Plex+Mono:ital,wght@0,400..700;1,400..700.css" />
+  <link rel="stylesheet" href="https://fonts.signalwerk.ch/css/latest/family=Work+Sans:ital,wght@0,100..900;1,100..900.css" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="release.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="masthead">
+    <div class="wrap masthead-inner">
+      <a class="brand" href="#" aria-label="MiniDiff home">
+        <img src="img/icon.png" alt="" width="28" height="28" />
+        <span>MiniDiff</span>
+      </a>
+      <nav aria-label="Main">
+        <a href="#install">Download</a>
+        <a href="https://github.com/signalwerk/miniDiff" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="wrap hero" aria-labelledby="hero-title">
+      <img class="hero-mark" src="img/icon.png" alt="" width="64" height="64" />
+      <h1 id="hero-title">MiniDiff</h1>
+      <p class="subtitle">Text diffs &amp; merges for macOS.</p>
+      <p class="intro">Compare two files, explore changed folders, or work through a merge. A small native app that helps you decide what to keep.</p>
+      <div class="actions">
+        <a class="button primary" id="download" href="https://github.com/signalwerk/miniDiff/releases/latest/download/MiniDiff-macos-universal.zip" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M10 3v10m-4-4 4 4 4-4M4 15v2h12v-2" /></svg>
+          Download for macOS
+        </a>
+        <a class="button secondary" href="https://github.com/signalwerk/miniDiff" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+      </div>
+      <p class="meta"><span id="version">Latest release</span> · Apple Silicon &amp; Intel · macOS 11+</p>
+    </section>
+
+    <figure class="wide main-shot" aria-labelledby="file-title">
+      <h2 class="screenshot-title" id="file-title">Compare files</h2>
+      <div class="screenshot-frame">
+        <img src="img/file.png" alt="MiniDiff comparing two TypeScript files side by side, with changed lines and words highlighted." width="1760" height="1096" fetchpriority="high" />
+      </div>
+      <figcaption>Every changed word, in context. Side by side or unified.</figcaption>
+    </figure>
+
+    <section class="wrap features" aria-labelledby="features-title">
+      <h2 id="features-title">A clearer view of what changed.</h2>
+      <ul class="feature-list">
+        <li>
+          <h3>Follow the changes</h3>
+          <p>Syntax colours keep code readable. Step through each change, ignore whitespace, or fold away the lines that stayed the same.</p>
+        </li>
+        <li>
+          <h3>Compare whole folders</h3>
+          <p>Drop two folders in. See which files were added, removed, or changed, then open any file for a closer look.</p>
+        </li>
+        <li>
+          <h3>Work through a merge</h3>
+          <p>Keep either side, combine both, or edit the result yourself. Changes that don’t conflict are merged for you.</p>
+        </li>
+        <li>
+          <h3>Keep your place</h3>
+          <p>Open each comparison in its own window. Use <kbd>⌘N</kbd> for another, and <kbd>n</kbd> / <kbd>p</kbd> to move between changes.</p>
+        </li>
+      </ul>
+    </section>
+
+    <div class="wide detail-shots">
+      <figure aria-labelledby="folder-title">
+        <h2 class="screenshot-title" id="folder-title">Compare folders</h2>
+        <div class="screenshot-frame">
+          <img src="img/folder.png" alt="A folder comparison showing the file tree on the left and the selected file’s changes on the right." width="1760" height="1096" loading="lazy" />
+        </div>
+        <figcaption>From a whole folder to a single line.</figcaption>
+      </figure>
+      <figure aria-labelledby="merge-title">
+        <h2 class="screenshot-title" id="merge-title">Resolve merges</h2>
+        <div class="screenshot-frame">
+          <img src="img/merge.png" alt="A three-way merge with local changes, the editable result, and remote changes." width="1760" height="1096" loading="lazy" />
+        </div>
+        <figcaption>Two versions. One result you can keep.</figcaption>
+      </figure>
+    </div>
+
+    <section class="wrap install" id="install" aria-labelledby="install-title">
+      <div class="install-panel">
+        <div>
+          <h2 id="install-title">Get MiniDiff for macOS.</h2>
+          <p>Download the GitHub release, unzip it, and move <strong>MiniDiff.app</strong> to Applications. For the first launch, right-click the app and choose <strong>Open</strong>.</p>
+          <p class="install-note">Free to use. MIT licensed. Updates arrive in the app.</p>
+        </div>
+        <a class="button primary" href="https://github.com/signalwerk/miniDiff/releases/latest" target="_blank" rel="noopener noreferrer">Get the latest release</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap footer-inner">
+      <p>MiniDiff</p>
+      <nav aria-label="Footer">
+        <a href="https://github.com/signalwerk/miniDiff/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
+      </nav>
+    </div>
+  </footer>
+
+</body>
+</html>
