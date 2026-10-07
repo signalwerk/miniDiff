@@ -212,9 +212,14 @@ creates the tag `vX.Y.Z`. Then it pushes `main` and the tag. Only version tags t
 2. deploys the landing page (`site/`) and `update.json` directly to GitHub Pages
    through the release workflow.
 
-Use **File → About MiniDiff** for version information and **File → Check for
-Updates...** to check manually. Automatic checks run on startup and every 24 hours
-while the app is open; the help menu lets you turn them off. Automatic checks are
+Use **MiniDiff → About MiniDiff** for version information and **MiniDiff → Check
+for Updates…** to check manually. **MiniDiff → Preferences…** (`⌘,`) lets you
+choose System, Light, or Dark appearance and turn automatic updates on or off.
+Recent macOS versions label that menu item **Settings…**.
+**Help → Keyboard Shortcuts** shows the available shortcuts. These are in the
+macOS menu bar and File actions apply to the focused window.
+Automatic checks run on startup and every 24 hours
+while the app is open. Automatic checks are
 paused when only merge views are open. Available updates offer installation and
 restart in the app bar, with unsaved merges protected before restart.
 

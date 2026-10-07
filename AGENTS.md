@@ -63,7 +63,7 @@ scripts/screenshots.py                            # macOS native captures → si
 - `assets/icon.svg`: icon source; `deleted-page` / `added-page` fills generate
   `assets/icon-colors.rs` for semantic diff colours. `scripts/make-icons.sh` uses
   resvg and iconutil; commit generated PNGs/ICNS so CI needs no renderer.
-  Native bundles, toolbar/welcome logos, and website icons share these assets.
+  Native bundles, welcome logos, and website icons share these assets.
   The website uses the copied SVG directly for its logo and favicon.
 - `integrations/tower/`, `scripts/install-tower.sh`: Tower custom tool
   (`LOCAL REMOTE [BASE MERGED]`).
@@ -111,7 +111,14 @@ scripts/screenshots.py                            # macOS native captures → si
 - **Merge-tool exit code:** 1 until the result is saved and unchanged since
   (`MergeView.saved && !unsaved`); git/Tower rely on it. Automatic update checks
   pause while only merge views are open; explicit File-menu checks still work.
-- **Updates:** File menu has an About version modal and a manual update check.
+- **Menus:** `src/platform/menu.rs` installs one AppKit menu bar on the main
+  thread after winit initialization. Native actions enter a logic inbox and target
+  the last focused viewport (including when the original window is hidden).
+  MiniDiff menu: About, Preferences, Check for Updates; File: window actions;
+  Help: Keyboard Shortcuts. Appearance and automatic-update settings live in
+  Preferences (`⌘,`). No per-window File/help menu, branding, or theme button.
+  Recent macOS versions automatically display Preferences as Settings in the menu.
+- **Updates:** MiniDiff menu has an About version modal and a manual update check.
   Automatic checks run on startup and every 24 hours (shared across windows,
   monotonic clock, logic-frame timer); respect `auto_update` and never interrupt
   checking/installing/installed states. Restart guards unsaved merges in all windows.

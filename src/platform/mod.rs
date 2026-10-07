@@ -2,6 +2,8 @@
 
 #[cfg(target_os = "macos")]
 pub mod macos;
+#[cfg(target_os = "macos")]
+pub mod menu;
 
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -19,6 +21,21 @@ pub struct Incoming {
 static INBOX: Mutex<Vec<Incoming>> = Mutex::new(Vec::new());
 static CTX: OnceLock<egui::Context> = OnceLock::new();
 static EXIT_CODE: AtomicI32 = AtomicI32::new(0);
+static MENU_INBOX: Mutex<Vec<MenuAction>> = Mutex::new(Vec::new());
+
+#[derive(Clone, Copy, Debug)]
+pub enum MenuAction {
+    About, Preferences, CheckUpdates, NewWindow, CloseWindow, Home, Reload, Swap, Shortcuts, Quit,
+}
+
+pub fn push_menu(action: MenuAction) {
+    MENU_INBOX.lock().unwrap().push(action);
+    if let Some(ctx) = CTX.get() { ctx.request_repaint_of(egui::ViewportId::ROOT); }
+}
+
+pub fn take_menu() -> Vec<MenuAction> {
+    std::mem::take(&mut *MENU_INBOX.lock().unwrap())
+}
 
 pub fn set_context(ctx: &egui::Context) {
     let _ = CTX.set(ctx.clone());

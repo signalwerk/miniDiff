@@ -89,6 +89,8 @@
   .field output { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.9375rem; }
   .field input[type="range"] { grid-column: 1 / -1; width: 100%; height: 44px; margin: 0; accent-color: var(--accent); }
   .field small { grid-column: 1 / -1; color: var(--muted); font-size: 0.8125rem; }
+  .check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 0.9375rem; cursor: pointer; }
+  .check input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
 
   .code-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
   .code-head h2 { font-size: 1rem; font-weight: 600; margin: 0; }
@@ -125,7 +127,7 @@
 <body>
 <main>
   <h1>Diff icon tuner</h1>
-  <p class="lede">Two A4-shaped pages (1 : √2), tilted by a calculated angle so that together they fill the 1000 × 1000 square exactly. The equals sign stays upright on top.</p>
+  <p class="lede">Two A4-shaped pages (1 : √2), tilted by a calculated angle so that together they fill the 1000 × 1000 square exactly. The equals sign sits on top, upright or tilted with the pages.</p>
 
   <div class="layout">
     <section class="preview" aria-label="Preview">
@@ -149,7 +151,7 @@
         <div class="field">
           <label for="overlap">Overlap size</label>
           <output id="overlapOut" for="overlap"></output>
-          <input type="range" id="overlap" min="30" max="95" step="1" value="75">
+          <input type="range" id="overlap" min="30" max="95" step="1" value="80">
           <small>How much of each page's width and height is shared.</small>
         </div>
         <div class="field">
@@ -159,10 +161,27 @@
           <small>Width of the bars, in icon units.</small>
         </div>
         <div class="field">
+          <label for="bar">Stroke width of equals sign</label>
+          <output id="barOut" for="bar"></output>
+          <input type="range" id="bar" min="20" max="200" step="1" value="75">
+          <small>Thickness of each bar, in icon units.</small>
+        </div>
+        <div class="field">
           <label for="radius">Corner radius</label>
           <output id="radiusOut" for="radius"></output>
-          <input type="range" id="radius" min="0" max="50" step="1" value="22">
+          <input type="range" id="radius" min="0" max="50" step="1" value="15">
           <small>As a share of the page width. It cannot exceed the shift between the pages or the shared width, so a large overlap limits it.</small>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Orientation and colour</legend>
+        <div>
+          <label class="check"><input type="checkbox" id="flipH"> Flip horizontally</label>
+          <label class="check"><input type="checkbox" id="flipV" checked> Flip vertically</label>
+          <label class="check"><input type="checkbox" id="swap" checked> Swap red and green</label>
+          <label class="check"><input type="checkbox" id="lockEq"> Lock equals sign to the shared corners</label>
+          <label class="check"><input type="checkbox" id="rotateEq" checked> Rotate equals sign with the pages</label>
         </div>
       </fieldset>
 
@@ -187,7 +206,6 @@ var COLOR_OLD = '#DC3D43';       // first page (removed)
 var COLOR_NEW = '#3DBB7A';       // second page (added)
 var COLOR_SAME = '#5F6B7A';      // overlap (unchanged)
 var COLOR_EQUALS = '#FFFFFF';
-var EQ_BAR = 0.25;               // bar thickness as a share of the bar width
 var EQ_GAP = 0.22;               // gap between the bars as a share of the bar width
 
 // ---------------------------------------------------------------------------
@@ -202,9 +220,10 @@ function computeLayout(overlap, radiusRel) {
   var w = 1, h = Math.SQRT2;
   var dx = (1 - overlap) * w;
   var dy = (1 - overlap) * h;
-  // The shared area is drawn as a box with two rounded corners. That is only
-  // exact while the radius is no larger than the shift between the pages and
-  // no larger than the shared width, so the radius is limited to that.
+  // The shared area should be a box with two rounded corners (each a corner of
+  // one page lying inside the other). That only holds while the radius is no
+  // larger than the shift between the pages and no larger than the shared
+  // width, so the radius is limited to that.
   var rMax = Math.min(0.5 * w, dx, w - dx);
   var r = Math.min(radiusRel * w, rMax);
 
@@ -251,56 +270,85 @@ function computeLayout(overlap, radiusRel) {
 function num(v) { return String(Math.round(v * 100) / 100); }
 
 // The whole icon as SVG text: two rounded rects (old page, new page) and the
-// shared area as a box with two rounded corners, all inside one rotated group,
-// plus the two bars of the equals sign.
-function buildSvg(overlap, radiusRel, eqWidth) {
+// shared area as a third copy of the new page clipped to the old page, all
+// inside one rotated group, plus the two bars of the equals sign.
+//   opts.flipH, opts.flipV  mirror the pages (the geometry is mirrored, not
+//                           the SVG: the shift and the tilt change sign)
+//   opts.swap               swap the colours of the two pages
+//   opts.lockEq             derive the equals sign from the shared area: the
+//                           centres of the bar end caps sit on the centres of
+//                           its two round corners (eqWidth is then ignored)
+//   opts.rotateEq           draw the equals sign inside the rotated group
+// eqBar is the thickness of each bar of the equals sign.
+function buildSvg(overlap, radiusRel, eqWidth, eqBar, opts) {
+  opts = opts || {};
   var g = computeLayout(overlap, radiusRel);
+  var e = equalsSign(g, eqWidth, eqBar, opts.lockEq, opts.rotateEq);
   var mid = SIZE / 2;
   var r = g.radius;
+  var fx = opts.flipH ? -1 : 1, fy = opts.flipV ? -1 : 1;
+  // A mirror on one axis reverses the direction of the tilt.
+  var angle = g.angle * fx * fy;
+  var shiftX = g.shiftX * fx, shiftY = g.shiftY * fy;
   // Positions before rotation: both pages together are centred on the icon.
-  var x1 = mid - (g.pageW + g.shiftX) / 2;
-  var y1 = mid - (g.pageH + g.shiftY) / 2;
-  var x2 = x1 + g.shiftX;
-  var y2 = y1 + g.shiftY;
-  var page = function (x, y, fill) {
-    return '    <rect x="' + num(x) + '" y="' + num(y) + '" width="' + num(g.pageW) +
-      '" height="' + num(g.pageH) + '" rx="' + num(r) + '" fill="' + fill + '"/>';
+  var x1 = mid - (g.pageW + shiftX) / 2;
+  var y1 = mid - (g.pageH + shiftY) / 2;
+  var x2 = x1 + shiftX;
+  var y2 = y1 + shiftY;
+  var colorOld = opts.swap ? COLOR_NEW : COLOR_OLD;
+  var colorNew = opts.swap ? COLOR_OLD : COLOR_NEW;
+  var page = function (x, y, attrs) {
+    return '<rect x="' + num(x) + '" y="' + num(y) + '" width="' + num(g.pageW) +
+      '" height="' + num(g.pageH) + '" rx="' + num(r) + '"' + (attrs ? ' ' + attrs : '') + '/>';
   };
 
-  // Shared area: left/top edges come from the new page, right/bottom edges
-  // from the old page. Only its top-left and bottom-right corners are round.
-  var left = x2, top = y2, right = x1 + g.pageW, bottom = y1 + g.pageH;
-  var shared;
-  if (r <= 0.005) {
-    shared = 'M' + num(left) + ',' + num(top) + ' H' + num(right) + ' V' + num(bottom) + ' H' + num(left) + ' Z';
-  } else {
-    var arc = ' A' + num(r) + ',' + num(r) + ' 0 0 1 ';
-    shared = 'M' + num(left + r) + ',' + num(top) +
-      ' H' + num(right) + ' V' + num(bottom - r) + arc + num(right - r) + ',' + num(bottom) +
-      ' H' + num(left) + ' V' + num(top + r) + arc + num(left + r) + ',' + num(top) + ' Z';
-  }
-
-  var barH = eqWidth * EQ_BAR;
-  var gap = eqWidth * EQ_GAP;
+  var indent = opts.rotateEq ? '    ' : '  ';
   var bar = function (y) {
-    return '  <rect x="' + num(mid - eqWidth / 2) + '" y="' + num(y) + '" width="' + num(eqWidth) +
-      '" height="' + num(barH) + '" rx="' + num(barH / 2) + '" fill="' + COLOR_EQUALS + '"/>';
+    return indent + '<rect x="' + num(mid - e.width / 2) + '" y="' + num(y) + '" width="' + num(e.width) +
+      '" height="' + num(e.barH) + '" rx="' + num(e.barH / 2) + '" fill="' + COLOR_EQUALS + '"/>';
   };
-  return [
+  var equals = [
+    indent + '<!-- equals sign -->',
+    bar(mid - e.gap / 2 - e.barH),
+    bar(mid + e.gap / 2)
+  ];
+  return [].concat(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + SIZE + ' ' + SIZE + '" width="' + SIZE + '" height="' + SIZE + '">',
-    '  <g transform="rotate(' + num(g.angle * 180 / Math.PI) + ' ' + mid + ' ' + mid + ')">',
+    '  <defs>',
+    '    <clipPath id="old-page">' + page(x1, y1, '') + '</clipPath>',
+    '  </defs>',
+    '  <g transform="rotate(' + num(angle * 180 / Math.PI) + ' ' + mid + ' ' + mid + ')">',
     '    <!-- old page -->',
-    page(x1, y1, COLOR_OLD),
+    '    ' + page(x1, y1, 'id="' + (opts.swap ? 'added-page' : 'deleted-page') + '" fill="' + colorOld + '"'),
     '    <!-- new page -->',
-    page(x2, y2, COLOR_NEW),
-    '    <!-- shared area -->',
-    '    <path d="' + shared + '" fill="' + COLOR_SAME + '"/>',
+    '    ' + page(x2, y2, 'id="' + (opts.swap ? 'deleted-page' : 'added-page') + '" fill="' + colorNew + '"'),
+    '    <!-- shared area: the new page clipped to the old page -->',
+    '    ' + page(x2, y2, 'fill="' + COLOR_SAME + '" clip-path="url(#old-page)"'),
+    opts.rotateEq ? equals : [],
     '  </g>',
-    '  <!-- equals sign -->',
-    bar(mid - gap / 2 - barH),
-    bar(mid + gap / 2),
+    opts.rotateEq ? [] : equals,
     '</svg>'
-  ].join('\n');
+  ).join('\n');
+}
+
+// Width, bar thickness and gap of the equals sign. When locked, the centres of
+// the round corners of the shared area give the positions of the end caps:
+// the shared area is centred on the icon, so its two corner centres lie at
+// mid ± (vx, vy), measured after the rotation unless the equals sign rotates
+// with the pages. Flipping only changes signs, not |vx|, |vy|.
+function equalsSign(g, eqWidth, barH, lock, rotate) {
+  if (!lock) {
+    return { width: eqWidth, barH: barH, gap: eqWidth * EQ_GAP, locked: false };
+  }
+  var ux = (g.pageW - g.shiftX) / 2 - g.radius;   // corner centre before rotation
+  var uy = (g.pageH - g.shiftY) / 2 - g.radius;
+  var a = rotate ? 0 : g.angle;
+  var cos = Math.cos(a), sin = Math.sin(a);
+  var vx = Math.abs(ux * cos - uy * sin);
+  var vy = Math.abs(ux * sin + uy * cos);
+  // Cap centres at x = mid ± vx and y = mid ± vy.
+  var width = 2 * vx + barH;
+  return { width: width, barH: barH, gap: 2 * vy - barH, locked: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -312,21 +360,29 @@ function render() {
   var overlap = Number(el('overlap').value) / 100;
   var radiusRel = Number(el('radius').value) / 100;
   var eqWidth = Number(el('eq').value);
+  var eqBar = Number(el('bar').value);
+  var opts = { flipH: el('flipH').checked, flipV: el('flipV').checked,
+    swap: el('swap').checked, lockEq: el('lockEq').checked, rotateEq: el('rotateEq').checked };
   var g = computeLayout(overlap, radiusRel);
+  var e = equalsSign(g, eqWidth, eqBar, opts.lockEq, opts.rotateEq);
+  // A single mirror turns the anticlockwise tilt into a clockwise one.
+  var clockwise = opts.flipH !== opts.flipV;
 
   el('overlapOut').textContent = Math.round(overlap * 100) + '%';
   el('radiusOut').textContent = (g.radiusLimited
     ? 'limited to ' + Math.round(g.radiusRel * 100) + '%'
     : Math.round(radiusRel * 100) + '%') + ' = ' + num(g.radius) + ' units';
-  el('eqOut').textContent = eqWidth + ' units';
+  el('eq').disabled = e.locked;
+  el('eqOut').textContent = e.locked
+    ? 'locked: ' + num(e.width) + ' units' + (e.gap < 0 ? ', bars overlap' : '')
+    : eqWidth + ' units';
+  el('barOut').textContent = eqBar + ' units' + (!e.locked && e.gap < 0 ? ', bars overlap' : '');
   el('facts').textContent = 'Tilt ' + num(Math.abs(g.angle) * 180 / Math.PI) +
-    '° anticlockwise, page ' + num(g.pageW) + ' × ' + num(g.pageH);
+    '° ' + (clockwise ? 'clockwise' : 'anticlockwise') + ', page ' + num(g.pageW) + ' × ' + num(g.pageH);
 
-  el('code').value = buildSvg(overlap, radiusRel, eqWidth);
-  el('frame').innerHTML = buildSvg(overlap, radiusRel, eqWidth);
-  el('s64').innerHTML = buildSvg(overlap, radiusRel, eqWidth);
-  el('s32').innerHTML = buildSvg(overlap, radiusRel, eqWidth);
-  el('s16').innerHTML = buildSvg(overlap, radiusRel, eqWidth);
+  var svg = buildSvg(overlap, radiusRel, eqWidth, eqBar, opts);
+  el('code').value = svg;
+  ['frame', 's64', 's32', 's16'].forEach(function (id) { el(id).innerHTML = svg; });
   el('status').textContent = '';
 }
 
@@ -348,7 +404,8 @@ function copySvg() {
   }
 }
 
-['overlap', 'radius', 'eq'].forEach(function (id) { el(id).addEventListener('input', render); });
+['overlap', 'radius', 'eq', 'bar'].forEach(function (id) { el(id).addEventListener('input', render); });
+['flipH', 'flipV', 'swap', 'lockEq', 'rotateEq'].forEach(function (id) { el(id).addEventListener('change', render); });
 el('copy').addEventListener('click', copySvg);
 el('bgToggle').addEventListener('click', function () {
   var dark = el('stage').classList.toggle('dark');

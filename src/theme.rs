@@ -218,21 +218,7 @@ impl ThemeChoice {
         });
     }
 
-    pub fn next(self) -> Self {
-        match self {
-            Self::System => Self::Light,
-            Self::Light => Self::Dark,
-            Self::Dark => Self::System,
-        }
-    }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::System => "◐ Auto",
-            Self::Light => "☀ Light",
-            Self::Dark => "🌙 Dark",
-        }
-    }
 }
 
 /// Install our look into both egui themes.

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use egui::{
-    Align, Align2, FontId, Id, Key, LayerId, Layout, Margin, Modifiers, Order, RichText, Sense, Stroke, Ui,
+    Align, Align2, FontId, Id, Key, LayerId, Layout, Margin, Modifiers, Order, RichText, Stroke, Ui,
     ViewportCommand, vec2,
 };
 
@@ -44,7 +44,7 @@ struct Settings {
     theme: ThemeChoice,
     view: ViewSettings,
     recent: Vec<(String, String)>,
-    /// Check minidiff.signalwerk.ch for a newer release on startup.
+    /// Check for a newer release on startup and every 24 hours.
     auto_update: bool,
 }
 
@@ -74,6 +74,8 @@ struct DiffWindow {
     toast: Option<(String, bool, f64)>,
     close_dialog: bool,
     about_open: bool,
+    preferences_open: bool,
+    shortcuts_open: bool,
     close_after_merge: bool,
     closed: bool,
     title: String,
@@ -88,6 +90,8 @@ impl DiffWindow {
             toast: None,
             close_dialog: false,
             about_open: false,
+            preferences_open: false,
+            shortcuts_open: false,
             close_after_merge: false,
             closed: false,
             title: String::new(),
@@ -106,6 +110,7 @@ struct AppState {
     windows: Vec<DiffWindow>,
     updater: crate::update::Updater,
     manual_check: bool,
+    focused: egui::ViewportId,
     requests: Vec<Incoming>,
     restart: Option<PathBuf>,
 }
@@ -123,6 +128,8 @@ struct WindowUi<'a> {
 impl AppState {
     fn new(cc: &eframe::CreationContext<'_>, launch: Launch) -> Self {
         platform::set_context(&cc.egui_ctx);
+        #[cfg(target_os = "macos")]
+        platform::menu::install();
         install_fonts(&cc.egui_ctx);
         theme::install(&cc.egui_ctx);
         let settings: Settings = cc
@@ -136,6 +143,7 @@ impl AppState {
             windows: Vec::new(),
             updater: crate::update::Updater::new(),
             manual_check: false,
+            focused: egui::ViewportId::ROOT,
             requests: Vec::new(),
             restart: None,
         };
@@ -215,6 +223,13 @@ impl AppState {
     }
 
     fn handle_root_events(&mut self, ctx: &egui::Context) {
+        if let Some(id) = ctx.input(|i| i.raw.viewports.iter()
+            .find(|(_, info)| info.focused == Some(true)).map(|(id, _)| *id)) {
+            self.focused = id;
+        }
+        for action in platform::take_menu() {
+            self.menu_action(action, ctx);
+        }
         if self.settings.auto_update && self.root.iter().chain(self.windows.iter())
             .any(|w| !w.closed && !matches!(w.screen, Screen::Merge(_))) {
             self.updater.check_automatically(ctx);
@@ -275,6 +290,51 @@ impl AppState {
             }
         }
         self.remove_closed_windows(ctx);
+    }
+
+    fn menu_action(&mut self, action: platform::MenuAction, ctx: &egui::Context) {
+        use platform::MenuAction;
+        if matches!(action, MenuAction::NewWindow) {
+            self.route_incoming(Incoming { entries: Vec::new(), slot: None }, ctx);
+            return;
+        }
+        if matches!(action, MenuAction::CheckUpdates) {
+            self.manual_check = true;
+            self.updater.check(ctx);
+        }
+        let target = self.root.iter().chain(self.windows.iter())
+            .find(|w| w.id == self.focused && !w.closed)
+            .or_else(|| self.root.iter().chain(self.windows.iter()).find(|w| !w.closed))
+            .map(|w| w.id);
+        for window in self.root.iter_mut().chain(self.windows.iter_mut()) {
+            if Some(window.id) != target && !matches!(action, MenuAction::Quit) { continue; }
+            let id = window.id;
+            let mut view = WindowUi {
+                window, settings: &mut self.settings, updater: &mut self.updater,
+                manual_check: &mut self.manual_check, requests: &mut self.requests,
+                restart: &mut self.restart,
+            };
+            if matches!(action, MenuAction::About | MenuAction::Preferences | MenuAction::Shortcuts | MenuAction::CloseWindow | MenuAction::Quit) {
+                view.window.about_open = false;
+                view.window.preferences_open = false;
+                view.window.shortcuts_open = false;
+            }
+            match action {
+                MenuAction::About => view.window.about_open = true,
+                MenuAction::Preferences => view.window.preferences_open = true,
+                MenuAction::Shortcuts => view.window.shortcuts_open = true,
+                MenuAction::CloseWindow | MenuAction::Quit => view.request_close(),
+                MenuAction::Home => view.go_home(),
+                MenuAction::Reload => view.reload(),
+                MenuAction::Swap => view.swap(),
+                MenuAction::CheckUpdates | MenuAction::NewWindow => {}
+            }
+            if view.window.close_dialog {
+                ctx.send_viewport_cmd_to(id, ViewportCommand::Focus);
+            }
+            ctx.send_viewport_cmd_to(id, ViewportCommand::Minimized(false));
+            ctx.request_repaint_of(id);
+        }
     }
 }
 
@@ -516,14 +576,14 @@ impl WindowUi<'_> {
     // UI
 
     fn global_keys(&mut self, ctx: &egui::Context) {
-        let (new_window, close, home, reload, swap, theme_key) = ctx.input_mut(|i| {
+        let (new_window, close, home, reload, swap, preferences_key) = ctx.input_mut(|i| {
             (
                 i.consume_key(Modifiers::COMMAND, Key::N),
                 i.consume_key(Modifiers::COMMAND, Key::W),
                 i.consume_key(Modifiers::COMMAND, Key::O),
                 i.consume_key(Modifiers::COMMAND, Key::R),
                 i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S),
-                i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::L),
+                i.consume_key(Modifiers::COMMAND, Key::Comma),
             )
         });
         if new_window {
@@ -544,9 +604,8 @@ impl WindowUi<'_> {
         if swap {
             self.swap();
         }
-        if theme_key {
-            self.settings.theme = self.settings.theme.next();
-            self.settings.theme.apply(ctx);
+        if preferences_key {
+            self.window.preferences_open = true;
         }
         if keys_free(ctx) && matches!(self.window.screen, Screen::File(_) | Screen::Folder(_)) {
             let (bigger, smaller) = ctx.input_mut(|i| {
@@ -572,39 +631,6 @@ impl WindowUi<'_> {
             .stroke(Stroke::NONE);
         egui::Panel::top("app-bar").frame(frame).show(ui, |ui| {
             ui.horizontal(|ui| {
-                let (logo, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
-                welcome::paint_logo(ui.painter(), logo.center(), 22.0);
-                let name =
-                    ui.add(egui::Label::new(RichText::new("MiniDiff").strong().size(14.0)).sense(Sense::click()));
-                if resp.clicked() || name.clicked() {
-                    self.go_home();
-                }
-                resp.on_hover_text(format!("Start screen  ({}O)", cmd()));
-
-                ui.menu_button("File", |ui| {
-                    if ui.button(format!("New Window    {}N", cmd())).clicked() {
-                        self.requests.push(Incoming {
-                            entries: Vec::new(),
-                            slot: None,
-                        });
-                        ui.close();
-                    }
-                    if ui.button(format!("Close Window    {}W", cmd())).clicked() {
-                        self.request_close();
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("About MiniDiff").clicked() {
-                        self.window.about_open = true;
-                        ui.close();
-                    }
-                    if ui.button("Check for Updates...").clicked() {
-                        *self.manual_check = true;
-                        self.updater.check(ui.ctx());
-                        ui.close();
-                    }
-                });
-
                 let crumb = match &self.window.screen {
                     Screen::Welcome => None,
                     Screen::File(fv) => Some(("File", short(&fv.left_label), short(&fv.right_label))),
@@ -622,17 +648,7 @@ impl WindowUi<'_> {
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.menu_button(RichText::new("?").size(14.0), |ui| self.help_menu(ui));
                     self.update_ui(ui);
-                    let t = self.settings.theme;
-                    if ui
-                        .button(t.label())
-                        .on_hover_text(format!("Theme: auto / light / dark  ({}⇧L)", cmd()))
-                        .clicked()
-                    {
-                        self.settings.theme = t.next();
-                        self.settings.theme.apply(ui.ctx());
-                    }
                     if matches!(self.window.screen, Screen::File(_) | Screen::Folder(_)) {
                         if ui.button("⟳").on_hover_text(format!("Reload  ({}R)", cmd())).clicked() {
                             self.reload();
@@ -799,20 +815,6 @@ fn short(label: &str) -> String {
 }
 
 impl WindowUi<'_> {
-    fn help_menu(&mut self, ui: &mut Ui) {
-        help_shortcuts(ui);
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("MiniDiff {}", env!("CARGO_PKG_VERSION"))).weak());
-            if ui.button("Check for updates").clicked() {
-                *self.manual_check = true;
-                self.updater.check(ui.ctx());
-                ui.close();
-            }
-        });
-        ui.checkbox(&mut self.settings.auto_update, "Check for updates automatically (startup and every 24 hours)");
-    }
-
     /// Update pill in the app bar (native only).
     fn update_ui(&mut self, ui: &mut Ui) {
         use crate::update::{State, Updater};
@@ -884,6 +886,7 @@ fn help_shortcuts(ui: &mut Ui) {
         ("Reload", format!("{c}R")),
         ("New window / close window", format!("{c}N · {c}W")),
         ("Start screen", format!("{c}O")),
+        ("Preferences", format!("{c},")),
     ];
     ui.set_min_width(320.0);
     ui.label(RichText::new("Keyboard shortcuts").strong());
@@ -976,6 +979,33 @@ impl WindowUi<'_> {
         }
         self.toast_ui(&ctx);
         self.close_dialog_ui(&ctx);
+        if self.window.preferences_open {
+            let response = egui::Modal::new(Id::new("preferences")).show(&ctx, |ui| {
+                ui.set_min_width(300.0);
+                ui.heading("Preferences");
+                ui.horizontal(|ui| {
+                    ui.label("Appearance");
+                    for (choice, label) in [(ThemeChoice::System, "System"), (ThemeChoice::Light, "Light"), (ThemeChoice::Dark, "Dark")] {
+                        if ui.selectable_value(&mut self.settings.theme, choice, label).changed() {
+                            self.settings.theme.apply(&ctx);
+                        }
+                    }
+                });
+                ui.checkbox(&mut self.settings.auto_update, "Check for updates automatically");
+                ui.label(RichText::new("On startup and every 24 hours while MiniDiff is open.").weak());
+                ui.separator();
+                ui.button("Close").clicked()
+            });
+            if response.inner || response.should_close() { self.window.preferences_open = false; }
+        }
+        if self.window.shortcuts_open {
+            let response = egui::Modal::new(Id::new("keyboard-shortcuts")).show(&ctx, |ui| {
+                help_shortcuts(ui);
+                ui.separator();
+                ui.button("Close").clicked()
+            });
+            if response.inner || response.should_close() { self.window.shortcuts_open = false; }
+        }
         if self.window.about_open {
             let response = egui::Modal::new(Id::new("about-minidiff")).show(&ctx, |ui| {
                 ui.set_min_width(260.0);
@@ -1187,6 +1217,7 @@ mod tests {
             windows: Vec::new(),
             updater: crate::update::Updater::new(),
             manual_check: false,
+            focused: egui::ViewportId::ROOT,
             requests: Vec::new(),
             restart: None,
         }
@@ -1209,6 +1240,48 @@ mod tests {
             entries: vec![a, b],
             slot: None,
         }
+    }
+
+    #[test]
+    fn native_quit_protects_unsaved_merge_and_replaces_preferences_with_confirmation() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        root_ui(&mut app).open_demo(true);
+        if let Screen::Merge(merge) = &mut app.root.as_mut().unwrap().screen {
+            merge.unsaved = true;
+        }
+        app.root.as_mut().unwrap().preferences_open = true;
+        app.route_incoming(Incoming { entries: Vec::new(), slot: None }, &ctx);
+        app.menu_action(platform::MenuAction::Quit, &ctx);
+        app.remove_closed_windows(&ctx);
+        let root = app.root.as_ref().unwrap();
+        assert!(!root.closed && root.close_dialog && !root.preferences_open);
+        assert!(matches!(&root.screen, Screen::Merge(merge) if merge.unsaved));
+        assert!(app.windows.is_empty());
+    }
+
+    #[test]
+    fn native_menu_targets_focused_child_and_works_after_root_closes() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.route_incoming(Incoming { entries: Vec::new(), slot: None }, &ctx);
+        let child = app.windows[0].id;
+        app.focused = child;
+        app.menu_action(platform::MenuAction::About, &ctx);
+        app.menu_action(platform::MenuAction::Preferences, &ctx);
+        app.menu_action(platform::MenuAction::Shortcuts, &ctx);
+        assert!(!app.root.as_ref().unwrap().about_open);
+        assert!(!app.root.as_ref().unwrap().preferences_open);
+        assert!(!app.windows[0].about_open && !app.windows[0].preferences_open && app.windows[0].shortcuts_open);
+        root_ui(&mut app).request_close();
+        app.remove_closed_windows(&ctx);
+        assert!(app.root.is_none());
+        app.menu_action(platform::MenuAction::NewWindow, &ctx);
+        assert_eq!(app.windows.len(), 2);
+        app.menu_action(platform::MenuAction::CloseWindow, &ctx);
+        app.remove_closed_windows(&ctx);
+        assert_eq!(app.windows.len(), 1);
+        assert_ne!(app.windows[0].id, child);
     }
 
     #[test]
