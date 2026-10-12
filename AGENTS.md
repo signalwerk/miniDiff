@@ -54,6 +54,9 @@ scripts/screenshots.py                            # macOS native captures → si
   embeds `samples/`). `IGNORED_NAMES` lists the skipped folder names.
   Welcome offers Files, Folders, and Merge demo buttons; the file demo compares
   the embedded TypeScript `format.ts` pair without requiring files on disk.
+  That pair includes an indentation-only change in `formatId` and a long shared
+  helper block so Whitespace and Collapse have visible effects in Files/Folders demos.
+  Embedded demos must never enter Recent; only filesystem comparisons are recorded.
 - `src/highlight.rs`: language table + capture-name → `Hl` mapping. The whole
   file is highlighted, then split into per-line spans.
 - `src/ui/`: `file_view.rs`, `folder_view.rs`, `merge_view.rs`, `welcome.rs`, `code.rs`
@@ -101,7 +104,10 @@ scripts/screenshots.py                            # macOS native captures → si
   Hover fills overlay text; use `from_rgba_unmultiplied_const` for translucent
   palette colours so an unscaled white RGB value cannot wash out the line.
 - **Windows:** closing the original window hides eframe's root viewport while
-  other windows remain; closing the last window ends the process. Unsaved merge
+  other windows remain. On macOS closing the last window keeps the app running;
+  Dock reopen/New Window/OS opens restore the root. Explicit Quit, updater restart,
+  and CLI merge-tool sessions still exit. Cancelling an unsaved close cancels Quit
+  and wakes the root controller even from a deferred window. Unsaved merge
   confirmation belongs to its window. OS opens and all window close guards run in
   `App::logic` too (background/occluded windows can skip `App::ui`). File menu /
   `⌘N` creates a new window.
@@ -134,12 +140,23 @@ scripts/screenshots.py                            # macOS native captures → si
   Help: Keyboard Shortcuts. Appearance and automatic-update settings live in
   Preferences (`⌘,`). No per-window File/help menu, branding, or theme button.
   Recent macOS versions automatically display Preferences as Settings in the menu.
-- **Information overlays:** About and Keyboard Shortcuts share a padded frame
+  Welcome omits the empty app bar; it appears there only for update controls or a manual check.
+- **Information overlays:** Preferences, About, and Keyboard Shortcuts share a padded frame
   and right-aligned Close footer. Shortcuts are grouped by task with readable key
   badges; only the list scrolls, keeping the heading and footer visible in small windows.
+  Its scrollbar appears only when the list overflows the available height.
+  Preferences uses separate Appearance/Updates sections and the shared segmented control.
 - **Folder filters:** leave space around search; use full status names on chips.
+  Normal clicks toggle one status; Mod-click enables only that status (Changed includes errors).
   Group Changed / Identical separately from Only in A / Only in B, wrapping in narrow sidebars.
   File and folder app bars have Swap on the left and Reload on the right, without comparison breadcrumbs.
+  Merge has the same Swap button/shortcut for Local and Remote; resolutions and custom edits
+  retain their output. Swapping unresolved marker blocks changes output and marks it unsaved.
+  Merge inline emphasis reuses file-diff line pairing/word diffs, against Base in three-way
+  merges or A/B without Base. Cached ranges follow source lines into the result and swap with inputs.
+  Merge uses a gentle spotlight and step counter for the current change. Included inputs
+  have labeled controls and full-chunk outlines (both for A+B/B+A, Base when selected).
+  Don't stack unused-input dimming with the spotlight on unfocused chunks.
 - **Updates:** MiniDiff menu has an About version modal and a manual update check.
   Automatic checks run on startup and every 24 hours (shared across windows,
   monotonic clock, logic-frame timer); respect `auto_update` and never interrupt
@@ -158,6 +175,9 @@ scripts/screenshots.py                            # macOS native captures → si
 
 - Only tags `vX.Y.Z` trigger CI; the tag must equal the `Cargo.toml` version
   (`scripts/release.sh` handles this).
+  The release script must refresh all three website screenshots before confirmation,
+  commit their PNGs/HTML dimensions with the version, and stop if capture fails.
+  `MINIDIFF_SCREENSHOT_DISPLAY=main` selects an external/main monitor (default: internal).
 - CI builds a universal app, uploads the fixed-name `MiniDiff-macos-universal.zip` and its `.sha256` to the
   GitHub Release, and deploys `site/` + generated `update.json` + CNAME
   `minidiff.signalwerk.ch` directly with the official Pages actions. Pages uses

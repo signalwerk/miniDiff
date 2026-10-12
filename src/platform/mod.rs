@@ -25,7 +25,7 @@ static MENU_INBOX: Mutex<Vec<MenuAction>> = Mutex::new(Vec::new());
 
 #[derive(Clone, Copy, Debug)]
 pub enum MenuAction {
-    About, Preferences, CheckUpdates, NewWindow, CloseWindow, Home, Reload, Swap, Shortcuts, Quit,
+    About, Preferences, CheckUpdates, NewWindow, CloseWindow, Home, Reload, Swap, Shortcuts, Quit, Reopen,
 }
 
 pub fn push_menu(action: MenuAction) {

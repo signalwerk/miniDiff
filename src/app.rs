@@ -95,6 +95,7 @@ struct DiffWindow {
     preferences_open: bool,
     shortcuts_open: bool,
     close_after_merge: bool,
+    close_cancelled: bool,
     closed: bool,
     title: String,
 }
@@ -112,6 +113,7 @@ impl DiffWindow {
             preferences_open: false,
             shortcuts_open: false,
             close_after_merge: false,
+            close_cancelled: false,
             closed: false,
             title: String::new(),
         }
@@ -132,6 +134,9 @@ struct AppState {
     focused: egui::ViewportId,
     requests: Vec<Incoming>,
     restart: Option<PathBuf>,
+    quit_requested: bool,
+    /// CLI merge tools must return to their caller after the last window closes.
+    exit_when_windowless: bool,
 }
 
 /// Borrow the shared services while rendering one window.
@@ -165,6 +170,8 @@ impl AppState {
             focused: egui::ViewportId::ROOT,
             requests: Vec::new(),
             restart: None,
+            quit_requested: false,
+            exit_when_windowless: !cfg!(target_os = "macos") || matches!(launch, Launch::Merge { .. }),
         };
         if app.settings.auto_update && !matches!(launch, Launch::Merge { .. }) {
             app.updater.check(&cc.egui_ctx);
@@ -182,6 +189,7 @@ impl AppState {
     }
 
     fn route_incoming(&mut self, incoming: Incoming, ctx: &egui::Context) {
+        let windowless = self.root.is_none() && self.windows.is_empty();
         // Empty requests are explicit New Window commands. OS opens reuse a
         // start screen, otherwise they create a new comparison window.
         let window = if !incoming.entries.is_empty() {
@@ -194,6 +202,10 @@ impl AppState {
         };
         let window = match window {
             Some(window) => window,
+            None if windowless => {
+                self.root = Some(DiffWindow::new(egui::ViewportId::ROOT));
+                self.root.as_mut().unwrap()
+            }
             None => {
                 let id = egui::ViewportId::from_hash_of(("diff-window", crate::ui::next_id()));
                 self.windows.push(DiffWindow::new(id));
@@ -218,6 +230,7 @@ impl AppState {
             ctx.send_viewport_cmd(ViewportCommand::Focus);
         }
         ctx.send_viewport_cmd_to(id, ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd_to(id, ViewportCommand::Visible(true));
         ctx.send_viewport_cmd_to(id, ViewportCommand::Focus);
         ctx.request_repaint();
     }
@@ -235,8 +248,16 @@ impl AppState {
             ctx.send_viewport_cmd_to(window.id, ViewportCommand::Visible(false));
         }
         self.windows.retain(|w| !w.closed);
-        if self.root.is_none() && self.windows.is_empty() {
-            log::debug!("Closing MiniDiff after the last window");
+        // Cancelling any unsaved-merge close cancels the pending Quit too.
+        for window in self.root.iter_mut().chain(self.windows.iter_mut()) {
+            if std::mem::take(&mut window.close_cancelled) {
+                self.quit_requested = false;
+            }
+        }
+        if self.root.is_none() && self.windows.is_empty()
+            && (self.quit_requested || self.exit_when_windowless)
+        {
+            log::debug!("Quitting MiniDiff");
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
     }
@@ -300,8 +321,10 @@ impl AppState {
         }
         // Close events may also arrive during logic-only frames, or again
         // after the original window has been hidden. Never let eframe end
-        // the event loop while another comparison or merge remains open.
-        if ctx.input(|i| i.viewport().close_requested()) && (self.root.is_some() || !self.windows.is_empty()) {
+        // the event loop on a normal macOS window close, even with no windows left.
+        if ctx.input(|i| i.viewport().close_requested())
+            && (self.root.is_some() || !self.windows.is_empty()
+                || (!self.quit_requested && !self.exit_when_windowless)) {
             log::debug!(
                 "Cancelling root close event; {} comparison windows remain",
                 self.windows.len()
@@ -324,9 +347,32 @@ impl AppState {
 
     fn menu_action(&mut self, action: platform::MenuAction, ctx: &egui::Context) {
         use platform::MenuAction;
+        if matches!(action, MenuAction::Reopen) {
+            if self.root.is_none() && self.windows.is_empty() {
+                self.route_incoming(Incoming { entries: Vec::new(), slot: None }, ctx);
+            } else if let Some(window) = self.root.iter().chain(self.windows.iter())
+                .find(|w| w.id == self.focused && !w.closed)
+                .or_else(|| self.root.iter().chain(self.windows.iter()).find(|w| !w.closed))
+            {
+                ctx.send_viewport_cmd_to(window.id, ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd_to(window.id, ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd_to(window.id, ViewportCommand::Focus);
+            }
+            return;
+        }
         if matches!(action, MenuAction::NewWindow) {
             self.route_incoming(Incoming { entries: Vec::new(), slot: None }, ctx);
             return;
+        }
+        if matches!(action, MenuAction::Quit) {
+            self.quit_requested = true;
+            for window in self.root.iter_mut().chain(self.windows.iter_mut()) {
+                window.close_cancelled = false;
+            }
+        } else if self.root.is_none() && self.windows.is_empty()
+            && matches!(action, MenuAction::About | MenuAction::Preferences | MenuAction::Shortcuts | MenuAction::CheckUpdates | MenuAction::Home)
+        {
+            self.route_incoming(Incoming { entries: Vec::new(), slot: None }, ctx);
         }
         if matches!(action, MenuAction::CheckUpdates) {
             self.manual_check = true;
@@ -357,7 +403,7 @@ impl AppState {
                 MenuAction::Home => view.go_home(),
                 MenuAction::Reload => view.reload(),
                 MenuAction::Swap => view.swap(),
-                MenuAction::CheckUpdates | MenuAction::NewWindow => {}
+                MenuAction::CheckUpdates | MenuAction::NewWindow | MenuAction::Reopen => {}
             }
             if view.window.close_dialog {
                 ctx.send_viewport_cmd_to(id, ViewportCommand::Focus);
@@ -463,6 +509,7 @@ impl WindowUi<'_> {
             self.window.screen = Screen::Welcome;
             return;
         }
+        // Recent stores reopenable filesystem comparisons; embedded demos stay out.
         if let (Some(pa), Some(pb)) = (a.fs_path(), b.fs_path()) {
             let pair = (pa.display().to_string(), pb.display().to_string());
             self.settings.recent.retain(|r| *r != pair);
@@ -560,7 +607,7 @@ impl WindowUi<'_> {
     }
 
     fn swap(&mut self) {
-        match &self.window.screen {
+        match &mut self.window.screen {
             Screen::File(fv) => {
                 let (a, b) = fv.entries();
                 let labels = Some((fv.right_label.clone(), fv.left_label.clone()));
@@ -572,6 +619,7 @@ impl WindowUi<'_> {
                 self.window.slots = [Some(b.clone()), Some(a.clone())];
                 self.window.screen = Screen::Folder(Box::new(FolderView::new(b, a)));
             }
+            Screen::Merge(m) => m.swap(),
             _ => {}
         }
     }
@@ -677,6 +725,17 @@ impl WindowUi<'_> {
     }
 
     fn app_bar(&mut self, ui: &mut Ui) {
+        if matches!(self.window.screen, Screen::Welcome)
+            && !*self.manual_check
+            && !matches!(
+                self.updater.state(),
+                crate::update::State::Available(_)
+                    | crate::update::State::Installing(_)
+                    | crate::update::State::Installed(_)
+            )
+        {
+            return;
+        }
         let pal = theme::palette(ui.ctx());
         let frame = egui::Frame::new()
             .fill(pal.panel)
@@ -684,7 +743,7 @@ impl WindowUi<'_> {
             .stroke(Stroke::NONE);
         egui::Panel::top("app-bar").frame(frame).show(ui, |ui| {
             ui.horizontal(|ui| {
-                if matches!(self.window.screen, Screen::File(_) | Screen::Folder(_))
+                if matches!(self.window.screen, Screen::File(_) | Screen::Folder(_) | Screen::Merge(_))
                     && ui.button("⇄ Swap")
                         .on_hover_text(format!("Swap A and B  ({}⇧S)", cmd()))
                         .clicked()
@@ -817,6 +876,7 @@ impl WindowUi<'_> {
             }
             Some(_) => {
                 self.window.close_dialog = false;
+                self.window.close_cancelled = self.window.close_after_merge;
                 self.window.close_after_merge = false;
             }
             None => {}
@@ -936,6 +996,28 @@ fn information_footer(ui: &mut Ui) -> bool {
     }).inner
 }
 
+fn preferences_contents(ui: &mut Ui, settings: &mut Settings) {
+    let pal = theme::palette(ui.ctx());
+    ui.set_width(360.0_f32.min(ui.ctx().content_rect().width() - 80.0));
+    ui.label(RichText::new("Preferences").size(22.0).strong());
+    ui.add_space(18.0);
+    ui.label(RichText::new("Appearance").size(14.0).strong().color(pal.text));
+    ui.add_space(6.0);
+    if crate::ui::segmented(ui, &mut settings.theme, &[
+        (ThemeChoice::System, "System", "Follow the system appearance"),
+        (ThemeChoice::Light, "Light", "Use light appearance"),
+        (ThemeChoice::Dark, "Dark", "Use dark appearance"),
+    ]) {
+        settings.theme.apply(ui.ctx());
+    }
+    ui.add_space(18.0);
+    ui.label(RichText::new("Updates").size(14.0).strong().color(pal.text));
+    ui.add_space(6.0);
+    ui.checkbox(&mut settings.auto_update, "Check for updates automatically");
+    ui.add_space(4.0);
+    ui.label(RichText::new("On startup and every 24 hours while MiniDiff is open.").size(13.0).color(pal.text_dim));
+}
+
 fn shortcut_section(ui: &mut Ui, title: &str, rows: &[(&str, String)]) {
     let pal = theme::palette(ui.ctx());
     ui.label(RichText::new(title).size(14.0).strong().color(pal.text));
@@ -976,7 +1058,7 @@ fn help_shortcuts(ui: &mut Ui) {
     egui::ScrollArea::vertical()
         .id_salt("shortcut-list")
         .max_height(max_height)
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
         .auto_shrink([false, true])
         .show(ui, |ui| {
             shortcut_section(ui, "Navigation", &[
@@ -1111,21 +1193,9 @@ impl WindowUi<'_> {
         self.toast_ui(&ctx);
         self.close_dialog_ui(&ctx);
         if self.window.preferences_open {
-            let response = egui::Modal::new(Id::new("preferences")).show(&ctx, |ui| {
-                ui.set_min_width(300.0);
-                ui.heading("Preferences");
-                ui.horizontal(|ui| {
-                    ui.label("Appearance");
-                    for (choice, label) in [(ThemeChoice::System, "System"), (ThemeChoice::Light, "Light"), (ThemeChoice::Dark, "Dark")] {
-                        if ui.selectable_value(&mut self.settings.theme, choice, label).changed() {
-                            self.settings.theme.apply(&ctx);
-                        }
-                    }
-                });
-                ui.checkbox(&mut self.settings.auto_update, "Check for updates automatically");
-                ui.label(RichText::new("On startup and every 24 hours while MiniDiff is open.").weak());
-                ui.separator();
-                ui.button("Close").clicked()
+            let response = information_modal(&ctx, "preferences").show(&ctx, |ui| {
+                preferences_contents(ui, self.settings);
+                information_footer(ui)
             });
             if response.inner || response.should_close() { self.window.preferences_open = false; }
         }
@@ -1214,6 +1284,7 @@ impl AppState {
                 crate::update::relaunch(&bundle);
                 self.root = None;
                 self.windows.clear();
+                self.quit_requested = true;
             }
         }
         self.remove_closed_windows(&ctx);
@@ -1275,7 +1346,7 @@ impl eframe::App for MiniDiffApp {
                         restart,
                     }
                     .ui(ui);
-                    if window.closed || !requests.is_empty() || restart.is_some() {
+                    if window.closed || window.close_cancelled || !requests.is_empty() || restart.is_some() {
                         ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
                     }
                 }
@@ -1345,6 +1416,8 @@ mod tests {
             focused: egui::ViewportId::ROOT,
             requests: Vec::new(),
             restart: None,
+            quit_requested: false,
+            exit_when_windowless: !cfg!(target_os = "macos"),
         }
     }
 
@@ -1364,6 +1437,49 @@ mod tests {
         Incoming {
             entries: vec![a, b],
             slot: None,
+        }
+    }
+
+    #[test]
+    fn home_screen_demos_preserve_recent_comparisons() {
+        for with_history in [false, true] {
+            let mut app = app();
+            if with_history {
+                root_ui(&mut app).compare(
+                    Entry::Fs(PathBuf::from("samples/left/src/util/format.ts")),
+                    Entry::Fs(PathBuf::from("samples/right/src/util/format.ts")),
+                    None,
+                );
+                assert_eq!(app.settings.recent.len(), 1);
+                root_ui(&mut app).go_home();
+            }
+            let recent = app.settings.recent.clone();
+
+            let (a, b) = crate::demo::files();
+            root_ui(&mut app).compare(a, b, None);
+            assert!(matches!(app.root.as_ref().unwrap().screen, Screen::File(_)));
+            assert_eq!(app.settings.recent, recent);
+            root_ui(&mut app).swap();
+            root_ui(&mut app).reload();
+            root_ui(&mut app).go_home();
+            root_ui(&mut app).compare_slots_if_ready();
+            assert_eq!(app.settings.recent, recent);
+
+            root_ui(&mut app).go_home();
+            root_ui(&mut app).open_demo(false);
+            assert!(matches!(app.root.as_ref().unwrap().screen, Screen::Folder(_)));
+            assert_eq!(app.settings.recent, recent);
+            root_ui(&mut app).swap();
+            root_ui(&mut app).reload();
+            root_ui(&mut app).go_home();
+            root_ui(&mut app).compare_slots_if_ready();
+            assert_eq!(app.settings.recent, recent);
+
+            root_ui(&mut app).go_home();
+            root_ui(&mut app).open_demo(true);
+            assert!(matches!(app.root.as_ref().unwrap().screen, Screen::Merge(_)));
+            root_ui(&mut app).go_home();
+            assert_eq!(app.settings.recent, recent);
         }
     }
 
@@ -1476,7 +1592,7 @@ mod tests {
     fn information_overlays_fit_small_windows_in_both_themes() {
         for dark in [false, true] {
             for size in [vec2(640.0, 400.0), vec2(880.0, 620.0)] {
-                for shortcuts in [false, true] {
+                for overlay in ["about", "shortcuts", "preferences"] {
                     let ctx = egui::Context::default();
                     install_fonts(&ctx);
                     theme::install(&ctx);
@@ -1489,14 +1605,18 @@ mod tests {
                             ..Default::default()
                         }, |ui| {
                             bounds = information_modal(ui.ctx(), "fit-test").show(ui.ctx(), |ui| {
-                                if shortcuts { help_shortcuts(ui); } else { about_contents(ui); }
+                                match overlay {
+                                    "shortcuts" => help_shortcuts(ui),
+                                    "preferences" => preferences_contents(ui, &mut Settings::default()),
+                                    _ => about_contents(ui),
+                                }
                                 information_footer(ui);
                             }).response.rect;
                         });
                         output.textures_delta.clear();
                     }
                     assert!(screen.shrink(12.0).contains_rect(bounds),
-                        "overlay does not fit: dark={dark}, shortcuts={shortcuts}, size={size:?}, bounds={bounds:?}");
+                        "overlay does not fit: dark={dark}, overlay={overlay}, size={size:?}, bounds={bounds:?}");
                 }
             }
         }
@@ -1596,6 +1716,66 @@ mod tests {
         app.route_incoming(folders(), &ctx);
         assert_eq!(app.windows.len(), 1);
         assert!(matches!(app.windows[0].screen, Screen::Folder(_)));
+    }
+
+    #[test]
+    fn windowless_app_reopens_and_only_explicit_quit_exits() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.exit_when_windowless = false;
+        let mut input = egui::RawInput::default();
+        input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().events.push(egui::ViewportEvent::Close);
+        for _ in 0..2 {
+            let output = ctx.run_logic(&input, |ctx| app.handle_root_events(ctx));
+            let commands = &output.viewport_commands[&egui::ViewportId::ROOT];
+            assert!(commands.contains(&ViewportCommand::CancelClose));
+            assert!(!commands.contains(&ViewportCommand::Close));
+            assert!(app.root.is_none() && app.windows.is_empty());
+        }
+        for action in [platform::MenuAction::Reopen, platform::MenuAction::NewWindow,
+            platform::MenuAction::Preferences, platform::MenuAction::About, platform::MenuAction::Shortcuts] {
+            app.menu_action(action, &ctx);
+            assert!(app.root.is_some() && app.windows.is_empty());
+            root_ui(&mut app).request_close();
+            app.remove_closed_windows(&ctx);
+        }
+        app.route_incoming(folders(), &ctx);
+        assert!(matches!(app.root.as_ref().unwrap().screen, Screen::Folder(_)));
+        app.route_incoming(folders(), &ctx);
+        root_ui(&mut app).request_close();
+        app.remove_closed_windows(&ctx);
+        app.windows[0].closed = true;
+        let output = ctx.run_logic(&egui::RawInput::default(), |ctx| app.remove_closed_windows(ctx));
+        assert!(!output.viewport_commands.get(&egui::ViewportId::ROOT).is_some_and(|c| c.contains(&ViewportCommand::Close)));
+        let output = ctx.run_logic(&egui::RawInput::default(), |ctx| {
+            app.menu_action(platform::MenuAction::Quit, ctx);
+            app.remove_closed_windows(ctx);
+        });
+        assert!(output.viewport_commands[&egui::ViewportId::ROOT].contains(&ViewportCommand::Close));
+    }
+
+    #[test]
+    fn cancelling_unsaved_quit_preserves_app_but_tool_sessions_exit() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.exit_when_windowless = false;
+        root_ui(&mut app).open_demo(true);
+        if let Screen::Merge(m) = &mut app.root.as_mut().unwrap().screen { m.unsaved = true; }
+        app.menu_action(platform::MenuAction::Quit, &ctx);
+        assert!(app.quit_requested && app.root.as_ref().unwrap().close_dialog);
+        app.root.as_mut().unwrap().close_cancelled = true;
+        app.root.as_mut().unwrap().close_dialog = false;
+        app.remove_closed_windows(&ctx);
+        assert!(!app.quit_requested);
+        if let Screen::Merge(m) = &mut app.root.as_mut().unwrap().screen { m.unsaved = false; }
+        let output = ctx.run_logic(&egui::RawInput::default(), |ctx| {
+            root_ui(&mut app).request_close();
+            app.remove_closed_windows(ctx);
+        });
+        assert!(!output.viewport_commands[&egui::ViewportId::ROOT].contains(&ViewportCommand::Close));
+        app.exit_when_windowless = true;
+        let output = ctx.run_logic(&egui::RawInput::default(), |ctx| app.remove_closed_windows(ctx));
+        assert!(output.viewport_commands[&egui::ViewportId::ROOT].contains(&ViewportCommand::Close));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Cut a release: bump the version, commit, tag vX.Y.Z and push.
+# Cut a release: bump the version, refresh screenshots, commit, tag vX.Y.Z and push.
 # The tag triggers .github/workflows/release.yml, which builds the macOS app,
 # publishes the GitHub Release, deploys the landing page and update.json to GitHub Pages.
 #
@@ -42,16 +42,21 @@ if [ "$VERSION" != "$CURRENT" ]; then
 fi
 cargo test -q >/dev/null || die "tests failed (Cargo.toml was updated; revert with git checkout Cargo.toml)"
 
+echo "Refreshing landing-page screenshots…"
+python3 scripts/screenshots.py --display "${MINIDIFF_SCREENSHOT_DISPLAY:-internal}" \
+  || die "screenshot capture failed; no release was committed or tagged"
+
 if [ "$2" != "--yes" ]; then
   printf "Commit, tag %s and push to origin? [y/N] " "$TAG"
   read -r answer
   case "$answer" in
     y|Y|yes) ;;
-    *) git checkout -q -- Cargo.toml Cargo.lock; die "aborted, version change reverted" ;;
+    *) git checkout -q -- Cargo.toml Cargo.lock site/index.html site/img/file.png site/img/folder.png site/img/merge.png
+       die "aborted, version and screenshot changes reverted" ;;
   esac
 fi
 
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock site/index.html site/img/file.png site/img/folder.png site/img/merge.png
 git diff --cached --quiet || git commit -q -m "Release $TAG"
 git tag -a "$TAG" -m "MiniDiff $VERSION"
 git push -q origin main

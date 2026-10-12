@@ -52,12 +52,16 @@ pub struct Palette {
 
     pub local: Color32,
     pub local_bg: Color32,
+    pub local_emph: Color32,
     pub remote: Color32,
     pub remote_bg: Color32,
+    pub remote_emph: Color32,
     pub conflict: Color32,
     pub conflict_bg: Color32,
     pub base_bg: Color32,
+    pub base_emph: Color32,
     pub custom_bg: Color32,
+    pub custom_emph: Color32,
 
     syntax: [Color32; 21],
 }
@@ -145,12 +149,16 @@ pub static DARK: Palette = Palette {
 
     local: hex(0x4c9aff),
     local_bg: hex(0x142338),
+    local_emph: tint(0x4c9aff, 0x0f1216, 40),
     remote: hex(0xb87fff),
     remote_bg: hex(0x23193a),
+    remote_emph: tint(0xb87fff, 0x0f1216, 40),
     conflict: hex(0xf0883e),
     conflict_bg: hex(0x3a2412),
     base_bg: hex(0x1b1f25),
+    base_emph: hex(0x39414d),
     custom_bg: hex(0x16302c),
+    custom_emph: hex(0x28594f),
 
     syntax: DARK_SYNTAX,
 };
@@ -183,12 +191,16 @@ pub static LIGHT: Palette = Palette {
 
     local: hex(0x0969da),
     local_bg: hex(0xe4efff),
+    local_emph: tint(0x0969da, 0xffffff, 30),
     remote: hex(0x8250df),
     remote_bg: hex(0xf1eaff),
+    remote_emph: tint(0x8250df, 0xffffff, 30),
     conflict: hex(0xbc4c00),
     conflict_bg: hex(0xfff1e5),
     base_bg: hex(0xf3f4f6),
+    base_emph: hex(0xd0d5dc),
     custom_bg: hex(0xdff7f1),
+    custom_emph: hex(0xa6dfd0),
 
     syntax: LIGHT_SYNTAX,
 };

@@ -1,10 +1,11 @@
-//! macOS: receive files dropped on the Dock / Finder icon.
+//! macOS: receive Dock / Finder file opens and application reopen events.
 //!
 //! Finder delivers those as an "open documents" Apple Event (`aevt/odoc`),
 //! which winit does not expose. We register our own handler right when the
 //! application is about to finish launching (the point Apple recommends for
 //! overriding the default handlers), so it works both for launching the app
-//! by dropping files and for dropping onto an already running app.
+//! by dropping files and for dropping onto an already running app. Reopen
+//! events restore a window when the app has been left running without one.
 
 use std::ffi::{CStr, c_char};
 use std::path::PathBuf;
@@ -22,6 +23,7 @@ const fn four_cc(s: &[u8; 4]) -> u32 {
 
 const K_CORE_EVENT_CLASS: u32 = four_cc(b"aevt");
 const K_AE_OPEN_DOCUMENTS: u32 = four_cc(b"odoc");
+const K_AE_REOPEN_APPLICATION: u32 = four_cc(b"rapp");
 const KEY_DIRECT_OBJECT: u32 = four_cc(b"----");
 
 define_class!(
@@ -41,7 +43,19 @@ define_class!(
                     forEventClass: K_CORE_EVENT_CLASS,
                     andEventID: K_AE_OPEN_DOCUMENTS
                 ];
+                let _: () = msg_send![
+                    manager,
+                    setEventHandler: self,
+                    andSelector: sel!(handleReopen:withReplyEvent:),
+                    forEventClass: K_CORE_EVENT_CLASS,
+                    andEventID: K_AE_REOPEN_APPLICATION
+                ];
             }
+        }
+
+        #[unsafe(method(handleReopen:withReplyEvent:))]
+        fn handle_reopen(&self, _event: *mut AnyObject, _reply: *mut AnyObject) {
+            super::push_menu(super::MenuAction::Reopen);
         }
 
         #[unsafe(method(handleOpenDocuments:withReplyEvent:))]

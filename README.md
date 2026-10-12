@@ -17,6 +17,7 @@ A native diff and merge tool for **text files and folders**, built in Rust with
   - Collapsible unchanged regions and an "ignore whitespace" option.
   - A change-overview strip that also works as the scrollbar.
 - **Folder diff**: a tree of changed, added, removed and identical files, with filters and search. Select a file to see its diff; step between changed files with `Mod+↓` / `Mod+↑` (see [Keyboard](#keyboard)).
+  Click a **Show files** tag to toggle its status, or `Mod+click` to show only that status.
 - **Merge**: a three-way merge (diff3) with columns A · Result · B (plus Base on request).
   - Non-conflicting changes are merged automatically.
   - For each conflict you choose A, B, A+B, B+A or Base, or edit the result by hand.
@@ -26,6 +27,9 @@ A native diff and merge tool for **text files and folders**, built in Rust with
   - Keep several comparisons open in separate windows. Dropping new items opens
     another view; an available start screen is reused. Use **File → New Window**
     on macOS, or `Mod+N` for a new start screen, and `Mod+W` to close the current window.
+    On macOS, closing the last window keeps MiniDiff running. Click its Dock icon
+    or choose **File → New Window** to reopen it; use **Quit MiniDiff** (`⌘Q`) to exit.
+    Git/Tower merge-tool launches still exit when their last window closes.
   - Use the command line (`minidiff a b`).
   - Configure it as the git or Tower diff/merge tool.
 - **Self-updating macOS bundles** from GitHub Releases.
@@ -242,8 +246,14 @@ The current release pipeline publishes macOS bundles:
 scripts/release.sh patch        # or minor / major / 1.2.3
 ```
 
-The script bumps the version in `Cargo.toml`, runs the tests, commits, and
-creates the tag `vX.Y.Z`. Then it pushes `main` and the tag. Only version tags trigger
+The script bumps the version in `Cargo.toml`, runs the tests, and captures fresh
+file, folder, and merge screenshots before asking to commit and publish. It includes
+the images and their HTML dimensions in the release commit, creates the tag `vX.Y.Z`,
+then pushes `main` and the tag. Screenshot capture must succeed before the release
+can proceed; run this on macOS with Screen Recording permission and the internal
+Retina display available. To capture on the main monitor instead, use
+`MINIDIFF_SCREENSHOT_DISPLAY=main scripts/release.sh patch`.
+Only version tags trigger
 [`.github/workflows/release.yml`](.github/workflows/release.yml). That workflow:
 
 1. builds the universal `MiniDiff.app` and attaches

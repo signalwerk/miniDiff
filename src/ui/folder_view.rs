@@ -35,6 +35,25 @@ struct Filter {
 }
 
 impl Filter {
+    fn click(&mut self, status: Status, exclusive: bool) {
+        if exclusive {
+            *self = Self {
+                changed: matches!(status, Status::Changed | Status::Error),
+                same: status == Status::Same,
+                left_only: status == Status::LeftOnly,
+                right_only: status == Status::RightOnly,
+            };
+        } else {
+            let on = match status {
+                Status::Changed | Status::Error => &mut self.changed,
+                Status::Same => &mut self.same,
+                Status::LeftOnly => &mut self.left_only,
+                Status::RightOnly => &mut self.right_only,
+            };
+            *on = !*on;
+        }
+    }
+
     fn allows(&self, s: Status) -> bool {
         match s {
             Status::Same => self.same,
@@ -406,12 +425,12 @@ impl FolderView {
             ui.scope(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
                 ui.horizontal_wrapped(|ui| {
-                    chip(ui, &mut self.filter.changed, &format!("Changed {}", c.changed), pal.mod_fg, "Show or hide changed files and comparison errors");
-                    chip(ui, &mut self.filter.same, &format!("Identical {}", c.same), pal.text_dim, "Show or hide files with identical contents");
+                    chip(ui, &mut self.filter, Status::Changed, &format!("Changed {}", c.changed), pal.mod_fg, "Show or hide changed files and comparison errors");
+                    chip(ui, &mut self.filter, Status::Same, &format!("Identical {}", c.same), pal.text_dim, "Show or hide files with identical contents");
                 });
                 ui.horizontal_wrapped(|ui| {
-                    chip(ui, &mut self.filter.left_only, &format!("Only in A {}", c.left_only), pal.del_fg, "Show or hide files present in A but missing from B");
-                    chip(ui, &mut self.filter.right_only, &format!("Only in B {}", c.right_only), pal.add_fg, "Show or hide files present in B but missing from A");
+                    chip(ui, &mut self.filter, Status::LeftOnly, &format!("Only in A {}", c.left_only), pal.del_fg, "Show or hide files present in A but missing from B");
+                    chip(ui, &mut self.filter, Status::RightOnly, &format!("Only in B {}", c.right_only), pal.add_fg, "Show or hide files present in B but missing from A");
                 });
             });
         });
@@ -531,14 +550,56 @@ impl FolderView {
     }
 }
 
-fn chip(ui: &mut Ui, on: &mut bool, text: &str, color: Color32, tip: &str) {
+fn chip(ui: &mut Ui, filter: &mut Filter, status: Status, text: &str, color: Color32, tip: &str) {
     let pal = crate::theme::palette(ui.ctx());
-    let rt = RichText::new(text).size(11.5).color(if *on { color } else { pal.text_dim });
+    let on = filter.allows(status);
+    let rt = RichText::new(text).size(11.5).color(if on { color } else { pal.text_dim });
     let b = egui::Button::new(rt)
-        .fill(if *on { color.gamma_multiply(0.15) } else { Color32::TRANSPARENT })
-        .stroke(Stroke::new(1.0, if *on { color.gamma_multiply(0.6) } else { pal.border }))
+        .fill(if on { color.gamma_multiply(0.15) } else { Color32::TRANSPARENT })
+        .stroke(Stroke::new(1.0, if on { color.gamma_multiply(0.6) } else { pal.border }))
         .corner_radius(CornerRadius::same(10));
-    if ui.add(b).on_hover_text(tip).clicked() {
-        *on = !*on;
+    if ui.add(b).on_hover_text(format!("{tip}\n{}-click to show only this status", super::cmd())).clicked() {
+        filter.click(status, ui.input(|i| i.modifiers.command));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_chips_toggle_normally_and_command_click_is_exclusive() {
+        let statuses = [Status::Changed, Status::Same, Status::LeftOnly, Status::RightOnly];
+        for initial in [false, true] {
+            for command in [false, true] {
+                for clicked in statuses {
+                    let ctx = egui::Context::default();
+                    let mut filter = Filter { changed: initial, same: initial, left_only: initial, right_only: initial };
+                    let modifiers = if command { Modifiers::COMMAND } else { Modifiers::NONE };
+                    let mut rect = Rect::NOTHING;
+                    for pressed in [None, Some(true), Some(false)] {
+                        let mut events = pressed.map_or_else(Vec::new, |pressed| vec![
+                            egui::Event::PointerMoved(rect.center()),
+                            egui::Event::PointerButton { pos: rect.center(), button: egui::PointerButton::Primary, pressed, modifiers },
+                        ]);
+                        events.insert(0, egui::Event::ModifiersChanged(modifiers));
+                        let mut output = ctx.run_ui(egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(640.0, 400.0))),
+                            events, ..Default::default()
+                        }, |ui| {
+                            rect = ui.scope(|ui| chip(ui, &mut filter, clicked, "Status", Color32::WHITE, "Filter")).response.rect;
+                        });
+                        output.textures_delta.clear();
+                    }
+                    for status in statuses {
+                        let expected = if command { status == clicked }
+                            else if status == clicked { !initial } else { initial };
+                        assert_eq!(filter.allows(status), expected,
+                            "initial={initial}, command={command}, clicked={clicked:?}, status={status:?}");
+                    }
+                    assert_eq!(filter.allows(Status::Error), filter.allows(Status::Changed));
+                }
+            }
+        }
     }
 }

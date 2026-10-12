@@ -15,9 +15,49 @@ use egui::{
 use super::code::{CodeStyle, line_job, paint_filler, paint_job, paint_line_number};
 use super::{ViewSettings, icon_button, keys_free, toggle, toolbar_frame};
 use crate::highlight::{Highlights, highlight};
+use crate::diff::{DiffOptions, diff_docs};
 use crate::merge::{ChunkKind, MergeDoc, Origin, Resolution, default_resolution};
 use crate::text::TextDoc;
 use crate::theme::Palette;
+
+type LineEmphasis = Vec<Vec<Range<usize>>>;
+
+fn pair_emphasis(a: &[String], b: &[String]) -> [LineEmphasis; 2] {
+    let doc = |lines: &[String]| TextDoc::from_lines(&lines.iter().map(String::as_str).collect::<Vec<_>>(), false, true);
+    let diff = diff_docs(&doc(a), &doc(b), DiffOptions::default());
+    let mut left = vec![Vec::new(); a.len()];
+    let mut right = vec![Vec::new(); b.len()];
+    for row in diff.rows {
+        if let Some(i) = row.left { left[i] = row.left_emph; }
+        if let Some(i) = row.right { right[i] = row.right_emph; }
+    }
+    [left, right]
+}
+
+fn input_emphasis(doc: &MergeDoc) -> Vec<[LineEmphasis; 3]> {
+    doc.chunks.iter().map(|c| {
+        if !doc.has_base {
+            let [local, remote] = pair_emphasis(&c.local, &c.remote);
+            return [local, vec![Vec::new(); c.base.len()], remote];
+        }
+        let [mut base, local] = pair_emphasis(&c.base, &c.local);
+        let [other_base, remote] = pair_emphasis(&c.base, &c.remote);
+        for (ranges, other) in base.iter_mut().zip(other_base) {
+            ranges.extend(other);
+            ranges.sort_by_key(|r| r.start);
+            let mut merged: Vec<Range<usize>> = Vec::new();
+            for r in ranges.drain(..) {
+                if let Some(last) = merged.last_mut() && r.start <= last.end {
+                    last.end = last.end.max(r.end);
+                } else {
+                    merged.push(r);
+                }
+            }
+            *ranges = merged;
+        }
+        [local, base, remote]
+    }).collect()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MItem {
@@ -40,6 +80,19 @@ enum Col {
     Base,
     Result,
     Remote,
+}
+
+fn includes(resolution: &Resolution, col: Col) -> bool {
+    matches!((resolution, col),
+        (Resolution::Local, Col::Local)
+        | (Resolution::Remote, Col::Remote)
+        | (Resolution::LocalThenRemote | Resolution::RemoteThenLocal, Col::Local | Col::Remote)
+        | (Resolution::Base, Col::Base))
+}
+
+fn dim_color(pal: &Palette, alpha: u8) -> Color32 {
+    let [r, g, b, _] = pal.bg.to_array();
+    Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,12 +123,14 @@ pub struct MergeView {
     base_hl: Highlights,
     remote_hl: Highlights,
     starts: Vec<[usize; 3]>,
+    input_emph: Vec<[LineEmphasis; 3]>,
 
     result: TextDoc,
     result_hl: Highlights,
     result_origins: Vec<Origin>,
     result_starts: Vec<usize>,
     result_lens: Vec<usize>,
+    result_emph: LineEmphasis,
 
     items: Vec<MItem>,
     /// Overview markers: item range and the chunk they belong to.
@@ -117,6 +172,7 @@ impl MergeView {
             base,
             remote,
             starts,
+            input_emph: input_emphasis(&doc),
             doc,
             file_name,
             output,
@@ -129,6 +185,7 @@ impl MergeView {
             result_origins: Vec::new(),
             result_starts: Vec::new(),
             result_lens: Vec::new(),
+            result_emph: Vec::new(),
             items: Vec::new(),
             markers: Vec::new(),
             built_for: None,
@@ -153,18 +210,73 @@ impl MergeView {
         view
     }
 
+    /// Exchange A and B while keeping resolved output and in-progress edits.
+    pub fn swap(&mut self) {
+        let previous_result = self.result.text.clone();
+        for c in &mut self.doc.chunks {
+            std::mem::swap(&mut c.local, &mut c.remote);
+            c.kind = match c.kind {
+                ChunkKind::Local => ChunkKind::Remote,
+                ChunkKind::Remote => ChunkKind::Local,
+                kind => kind,
+            };
+            c.resolution = match &c.resolution {
+                Resolution::Local => Resolution::Remote,
+                Resolution::Remote => Resolution::Local,
+                Resolution::LocalThenRemote => Resolution::RemoteThenLocal,
+                Resolution::RemoteThenLocal => Resolution::LocalThenRemote,
+                res => res.clone(),
+            };
+        }
+        self.labels.swap(0, 2);
+        std::mem::swap(&mut self.local, &mut self.remote);
+        std::mem::swap(&mut self.local_hl, &mut self.remote_hl);
+        for start in &mut self.starts {
+            start.swap(0, 2);
+        }
+        for emph in &mut self.input_emph {
+            emph.swap(0, 2);
+        }
+        self.refresh_result();
+        // Unresolved marker blocks exchange their sides too, changing saved text.
+        if self.result.text != previous_result {
+            self.unsaved = true;
+            self.saved = false;
+        }
+    }
+
     fn refresh_result(&mut self) {
         let mut lines: Vec<&str> = Vec::new();
         self.result_origins.clear();
         self.result_starts.clear();
         self.result_lens.clear();
-        for c in &self.doc.chunks {
+        self.result_emph.clear();
+        for (ci, c) in self.doc.chunks.iter().enumerate() {
             let r = c.result();
+            let custom = if let Resolution::Custom(lines) = &c.resolution {
+                let [_, ranges] = pair_emphasis(if self.doc.has_base { &c.base } else { &c.local }, lines);
+                ranges
+            } else { Vec::new() };
+            let mut offsets = [0; 3];
             self.result_starts.push(lines.len());
             self.result_lens.push(r.len());
             for (l, o) in r {
                 lines.push(l);
                 self.result_origins.push(o);
+                let side = match o {
+                    Origin::Local => Some(0),
+                    Origin::Base | Origin::Stable => Some(1),
+                    Origin::Remote => Some(2),
+                    _ => None,
+                };
+                let emph = if let Some(side) = side {
+                    let ranges = self.input_emph[ci][side].get(offsets[side]).cloned().unwrap_or_default();
+                    offsets[side] += 1;
+                    ranges
+                } else if o == Origin::Custom {
+                    custom.get(lines.len() - 1 - self.result_starts[ci]).cloned().unwrap_or_default()
+                } else { Vec::new() };
+                self.result_emph.push(emph);
             }
         }
         self.result = TextDoc::from_lines(&lines, self.doc.crlf, self.doc.trailing_newline);
@@ -420,6 +532,12 @@ impl MergeView {
                     let n = self.next_change(self.current);
                     self.goto(n);
                 }
+                let changes = self.doc.chunks.iter().filter(|c| c.is_change()).count();
+                if let Some(ci) = self.current.filter(|&ci| self.doc.chunks[ci].is_change()) {
+                    let step = self.doc.chunks[..=ci].iter().filter(|c| c.is_change()).count();
+                    ui.label(RichText::new(format!("Change {step} / {changes}")).color(pal.accent).strong());
+                    ui.separator();
+                }
                 let total = self.doc.conflict_count();
                 let open = self.doc.unresolved_count();
                 if total == 0 {
@@ -591,7 +709,6 @@ impl MergeView {
                         self.expanded.insert(ci);
                         self.built_for = None;
                     }
-                    continue;
                 }
                 MItem::Action(_) => {
                     self.paint_action_row(ui, &p, r, &cols, ci, st, &mut clicked_action, &mut edit);
@@ -606,7 +723,41 @@ impl MergeView {
                     }
                 }
             }
-            if self.current == Some(ci) && self.doc.chunks[ci].is_change() {
+            let c = &self.doc.chunks[ci];
+            let focused = self.current == Some(ci) && c.is_change();
+            let has_focus = self.current.is_some();
+            if c.is_change() {
+                for (col, cr) in &cols {
+                    let color = match col {
+                        Col::Local => pal.local,
+                        Col::Remote => pal.remote,
+                        Col::Base => pal.text_dim,
+                        Col::Result => continue,
+                    };
+                    let cell = Rect::from_x_y_ranges(cr.x_range(), r.y_range());
+                    if includes(&c.resolution, *col) {
+                        p.vline(cell.left() + 1.0, cell.y_range(), Stroke::new(2.0, color));
+                        p.vline(cell.right() - 1.0, cell.y_range(), Stroke::new(2.0, color));
+                        if idx == 0 || self.items[idx - 1].chunk() != ci {
+                            p.hline(cell.x_range(), cell.top() + 1.0, Stroke::new(2.0, color));
+                        }
+                        if idx + 1 == self.items.len() || self.items[idx + 1].chunk() != ci {
+                            p.hline(cell.x_range(), cell.bottom() - 1.0, Stroke::new(2.0, color));
+                        }
+                    } else if c.resolution != Resolution::Unresolved && (focused || !has_focus) {
+                        // Avoid stacking this with the spotlight dim on other chunks.
+                        p.rect_filled(cell, 0.0, dim_color(pal, 50));
+                    }
+                }
+            }
+            if focused {
+                let [red, green, blue, _] = pal.accent.to_array();
+                p.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(red, green, blue, 14));
+            } else if has_focus {
+                // Gentle spotlight keeps surrounding code readable.
+                p.rect_filled(r, 0.0, dim_color(pal, 58));
+            }
+            if focused {
                 p.rect_filled(Rect::from_min_size(r.min, vec2(3.0, st.row_h)), 0.0, pal.accent);
             }
             if hovered == Some(idx) && !matches!(item, MItem::Action(_)) {
@@ -692,25 +843,25 @@ impl MergeView {
         };
 
         let res = &c.resolution;
-        let uses_local = matches!(res, Resolution::Local | Resolution::LocalThenRemote | Resolution::RemoteThenLocal);
-        let uses_remote = matches!(res, Resolution::Remote | Resolution::LocalThenRemote | Resolution::RemoteThenLocal);
+        let uses_local = includes(res, Col::Local);
+        let uses_remote = includes(res, Col::Remote);
         for (col, cr) in cols {
             let x0 = cr.left() + 8.0;
             match col {
                 Col::Local => {
-                    let (_, hit) = chip(x0, "Use A  ▶", uses_local, pal.local, "Take A (local)  — key a / 1", 1);
+                    let (_, hit) = chip(x0, if uses_local { "✔ Included A" } else { "Use A  ▶" }, uses_local, pal.local, "Take A (local)  — key a / 1", 1);
                     if hit {
                         *clicked = Some((ci, Resolution::Local));
                     }
                 }
                 Col::Remote => {
-                    let (_, hit) = chip(x0, "◀  Use B", uses_remote, pal.remote, "Take B (remote)  — key b / 2", 2);
+                    let (_, hit) = chip(x0, if uses_remote { "✔ Included B" } else { "◀  Use B" }, uses_remote, pal.remote, "Take B (remote)  — key b / 2", 2);
                     if hit {
                         *clicked = Some((ci, Resolution::Remote));
                     }
                 }
                 Col::Base => {
-                    let (_, hit) = chip(x0, "Use base", *res == Resolution::Base, pal.text_dim, "Take the common ancestor  — key 0", 3);
+                    let (_, hit) = chip(x0, if *res == Resolution::Base { "✔ Included base" } else { "Use base" }, *res == Resolution::Base, pal.text_dim, "Take the common ancestor  — key 0", 3);
                     if hit {
                         *clicked = Some((ci, Resolution::Base));
                     }
@@ -838,7 +989,19 @@ impl MergeView {
             }
             j
         } else {
-            line_job(doc.line(line_idx), hl.line(line_idx), &[], Color32::TRANSPARENT, st)
+            let (emph, color) = match col {
+                Col::Local => (&self.input_emph[ci][0][k], pal.local_emph),
+                Col::Base => (&self.input_emph[ci][1][k], pal.base_emph),
+                Col::Remote => (&self.input_emph[ci][2][k], pal.remote_emph),
+                Col::Result => (&self.result_emph[line_idx], match self.result_origins[line_idx] {
+                    Origin::Local => pal.local_emph,
+                    Origin::Remote => pal.remote_emph,
+                    Origin::Base => pal.base_emph,
+                    Origin::Custom => pal.custom_emph,
+                    _ => Color32::TRANSPARENT,
+                }),
+            };
+            line_job(doc.line(line_idx), hl.line(line_idx), emph, color, st)
         };
         let text_rect = Rect::from_min_max(pos2(g.right() + 8.0, rect.top()), rect.max);
         paint_job(p, text_rect, job, self.h_off, st);
@@ -964,5 +1127,162 @@ fn describe(r: &Resolution) -> &'static str {
         Resolution::RemoteThenLocal => "B then A",
         Resolution::Base => "Base",
         Resolution::Custom(_) => "Edited",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::merge::Chunk;
+
+    #[test]
+    fn chosen_inputs_match_each_resolution() {
+        for (resolution, expected) in [
+            (Resolution::Unresolved, [false, false, false]),
+            (Resolution::Local, [true, false, false]),
+            (Resolution::Remote, [false, false, true]),
+            (Resolution::LocalThenRemote, [true, false, true]),
+            (Resolution::RemoteThenLocal, [true, false, true]),
+            (Resolution::Base, [false, true, false]),
+            (Resolution::Custom(vec!["edited".into()]), [false, false, false]),
+        ] {
+            assert_eq!([Col::Local, Col::Base, Col::Remote].map(|col| includes(&resolution, col)), expected);
+            assert!(!includes(&resolution, Col::Result));
+        }
+    }
+
+    fn marked(text: &str, ranges: &[Range<usize>]) -> Vec<String> {
+        ranges.iter().map(|r| text[r.clone()].to_owned()).collect()
+    }
+
+    #[test]
+    fn inline_emphasis_follows_resolutions_custom_edits_and_swaps() {
+        let text = |s: &str| TextDoc::from_string(format!("let value = {s};\n"));
+        let doc = MergeDoc::three_way(&text("1"), &text("2"), &text("3"));
+        let mut view = MergeView::new(doc, "value.rs".into(), None,
+            ["Local".into(), "Base".into(), "Remote".into()], false);
+        for (side, expected) in ["2", "1", "3"].into_iter().enumerate() {
+            let doc = [&view.local, &view.base, &view.remote][side];
+            assert_eq!(marked(doc.line(0), &view.input_emph[0][side][0]), [expected]);
+        }
+        // Conflict markers stay plain; each input's emphasis follows its result line.
+        assert!(view.result_emph[0].is_empty());
+        assert_eq!(marked(view.result.line(1), &view.result_emph[1]), ["2"]);
+        assert_eq!(marked(view.result.line(3), &view.result_emph[3]), ["3"]);
+        view.set_resolution(0, Resolution::LocalThenRemote);
+        assert_eq!(marked(view.result.line(0), &view.result_emph[0]), ["2"]);
+        assert_eq!(marked(view.result.line(1), &view.result_emph[1]), ["3"]);
+        view.swap();
+        assert_eq!(marked(view.local.line(0), &view.input_emph[0][0][0]), ["3"]);
+        assert_eq!(marked(view.result.line(0), &view.result_emph[0]), ["2"]);
+        assert_eq!(marked(view.result.line(1), &view.result_emph[1]), ["3"]);
+        view.set_resolution(0, Resolution::Custom(vec!["let value = 4;".into()]));
+        assert_eq!(marked(view.result.line(0), &view.result_emph[0]), ["4"]);
+    }
+
+    #[test]
+    fn inline_emphasis_uses_line_pairing_and_utf8_ranges_without_base() {
+        let local = vec!["unchanged".into(), "let café = 1;".into()];
+        let remote = vec!["inserted".into(), "unchanged".into(), "let café = 2;".into()];
+        let doc = MergeDoc {
+            chunks: vec![Chunk {
+                kind: ChunkKind::Conflict, base: Vec::new(), local, remote,
+                resolution: Resolution::Unresolved,
+            }],
+            ..Default::default()
+        };
+        let emph = input_emphasis(&doc);
+        assert!(emph[0][0][0].is_empty());
+        assert!(emph[0][2][0].is_empty());
+        assert!(emph[0][2][1].is_empty());
+        assert_eq!(marked(&doc.chunks[0].local[1], &emph[0][0][1]), ["1"]);
+        assert_eq!(marked(&doc.chunks[0].remote[2], &emph[0][2][2]), ["2"]);
+        assert!(emph[0][1].is_empty());
+    }
+
+    #[test]
+    fn base_emphasis_combines_both_sides_and_unchanged_inputs_stay_plain() {
+        let text = |s: &str| TextDoc::from_string(format!("let value = {s};\n"));
+        let base = text("1 + 2");
+        for remote in [text("1 + 4"), base.clone()] {
+            let doc = MergeDoc::three_way(&base, &text("3 + 2"), &remote);
+            let emph = input_emphasis(&doc);
+            assert_eq!(marked(&doc.chunks[0].local[0], &emph[0][0][0]), ["3"]);
+            if remote.text == base.text {
+                assert!(emph[0][2][0].is_empty());
+                assert_eq!(marked(&doc.chunks[0].base[0], &emph[0][1][0]), ["1"]);
+            } else {
+                assert_eq!(marked(&doc.chunks[0].base[0], &emph[0][1][0]), ["1", "2"]);
+            }
+        }
+    }
+
+    fn view(resolution: Resolution) -> MergeView {
+        let doc = MergeDoc {
+            chunks: vec![
+                Chunk {
+                    kind: ChunkKind::Conflict,
+                    base: vec!["base".into()],
+                    local: vec!["local".into(), "extra".into()],
+                    remote: vec!["remote".into()],
+                    resolution,
+                },
+                Chunk {
+                    kind: ChunkKind::Local,
+                    base: vec!["old".into()],
+                    local: vec!["new".into()],
+                    remote: vec!["old".into()],
+                    resolution: Resolution::Local,
+                },
+            ],
+            has_base: true,
+            trailing_newline: true,
+            ..Default::default()
+        };
+        MergeView::new(doc, "merged.rs".into(), Some(PathBuf::from("merged.rs")),
+            ["Local".into(), "Base".into(), "Remote".into()], true)
+    }
+
+    #[test]
+    fn swap_preserves_resolved_output_edits_and_save_state() {
+        for resolution in [Resolution::Local, Resolution::Remote, Resolution::LocalThenRemote,
+            Resolution::RemoteThenLocal, Resolution::Base, Resolution::Custom(vec!["edited".into()])] {
+            let mut view = view(resolution.clone());
+            let output = view.result.text.clone();
+            view.saved = true;
+            view.editing = Some((0, "pending edit".into()));
+            view.swap();
+            assert_eq!(view.result.text, output);
+            assert!(view.saved && !view.unsaved);
+            assert_eq!(view.labels, ["Remote", "Base", "Local"]);
+            assert_eq!(view.local.line(0), "remote");
+            assert_eq!(view.remote.line(0), "local");
+            assert_eq!(view.starts[1], [1, 1, 2]);
+            assert_eq!(view.doc.chunks[1].kind, ChunkKind::Remote);
+            assert_eq!(view.doc.chunks[1].resolution, Resolution::Remote);
+            assert_eq!(view.editing, Some((0, "pending edit".into())));
+            assert_eq!(view.output, Some(PathBuf::from("merged.rs")));
+            assert!(view.tool_mode);
+            assert!(view.built_for.is_none());
+            view.swap();
+            assert_eq!(view.result.text, output);
+            assert_eq!(view.doc.chunks[0].resolution, resolution);
+            assert_eq!(view.starts[1], [2, 1, 1]);
+            assert_eq!(view.doc.chunks[1].kind, ChunkKind::Local);
+        }
+    }
+
+    #[test]
+    fn swap_keeps_conflicts_unresolved_and_marks_changed_markers_unsaved() {
+        let mut view = view(Resolution::Unresolved);
+        let output = view.result.text.clone();
+        view.saved = true;
+        view.swap();
+        assert_eq!(view.doc.chunks[0].resolution, Resolution::Unresolved);
+        assert!(view.result.text.starts_with("<<<<<<< LOCAL\nremote\n=======\nlocal\nextra\n"));
+        assert!(view.unsaved && !view.saved);
+        view.swap();
+        assert_eq!(view.result.text, output);
+        assert!(view.unsaved && !view.saved);
     }
 }
