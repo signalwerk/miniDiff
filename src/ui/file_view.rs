@@ -8,7 +8,7 @@ use egui::{
     Ui, UiBuilder, Vec2, pos2, vec2,
 };
 
-use super::code::{CodeStyle, line_job, paint_filler, paint_job, paint_line_number};
+use super::code::{CodeStyle, line_job, paint_filler, paint_job, paint_line_number, ChangeSides, paint_change_marker};
 use super::{ViewSettings, icon_button, keys_free, segmented, toggle, toolbar_frame};
 use crate::diff::{DiffOptions, FileDiff, RowKind, diff_docs};
 use crate::highlight::{Highlights, highlight, language_name};
@@ -496,7 +496,7 @@ impl FileView {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
             let (icon, msg, color) = if self.bytes_equal {
-                ("✔", "Binary files are identical", pal.add_fg)
+                ("✔", "Binary files are identical", pal.text_dim)
             } else {
                 ("≠", "Binary files differ", pal.mod_fg)
             };
@@ -557,14 +557,14 @@ impl FileView {
                 vec2(220.0, 30.0),
             );
             let p = ui.painter();
-            p.rect_filled(banner, 15.0, pal.add_bg);
-            p.rect_stroke(banner, 15.0, Stroke::new(1.0, pal.add_fg), egui::StrokeKind::Inside);
+            p.rect_filled(banner, 15.0, pal.panel);
+            p.rect_stroke(banner, 15.0, Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
             p.text(
                 banner.center(),
                 Align2::CENTER_CENTER,
                 "✔  Files are identical",
                 egui::FontId::proportional(13.0),
-                pal.add_fg,
+                pal.text_dim,
             );
         }
 
@@ -812,12 +812,12 @@ impl FileView {
         for &(s, e, m) in &self.markers {
             let y0 = rect.top() + s as f32 / total * h;
             let y1 = (rect.top() + e as f32 / total * h).max(y0 + 2.0);
-            let color = match m {
-                Mark::Add => pal.add_fg,
-                Mark::Del => pal.del_fg,
-                Mark::Mod => pal.mod_fg,
+            let sides = match m {
+                Mark::Add => ChangeSides::B,
+                Mark::Del => ChangeSides::A,
+                Mark::Mod => ChangeSides::Both,
             };
-            p.rect_filled(Rect::from_x_y_ranges(rect.left() + 3.0..=rect.right() - 2.0, y0..=y1), 1.0, color);
+            paint_change_marker(p, Rect::from_x_y_ranges(rect.left() + 3.0..=rect.right() - 2.0, y0..=y1), sides, pal);
         }
         if content_h > self.last_view_h {
             let t0 = rect.top() + self.last_offset / content_h * h;

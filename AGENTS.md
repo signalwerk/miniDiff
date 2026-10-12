@@ -143,9 +143,13 @@ scripts/screenshots.py                            # macOS native captures → si
   Preferences (`⌘,`). No per-window File/help menu, branding, or theme button.
   Recent macOS versions automatically display Preferences as Settings in the menu.
   Welcome omits the empty app bar; it appears there only for update controls or a manual check.
-- **Information overlays:** Preferences, About, and Keyboard Shortcuts share a padded frame
-  and right-aligned Close footer. Shortcuts are grouped by task with readable key
-  badges; only the list scrolls, keeping the heading and footer visible in small windows.
+- **Information windows:** Preferences and Shortcuts are app-wide singleton native windows,
+  centered by AppKit on each open and independent of comparisons (including a hidden root).
+  Wake/focus the root controller until their first frame is created, then hide it again;
+  focus the utility after that wake-up. Center within the display's visible frame and clamp size.
+  They share About's padding, heading style, and right-aligned Close footer.
+  Shortcuts are grouped by task with readable key badges; only the list scrolls,
+  keeping the heading and footer visible in small windows.
   Its scrollbar appears only when the list overflows the available height.
   Preferences uses separate Appearance/Updates sections and the shared segmented control.
   Its Check for Updates button uses the manual updater, reports status in the dialog,
@@ -170,6 +174,10 @@ scripts/screenshots.py                            # macOS native captures → si
   Side chips reserve both Use/Included label widths and keep a fixed inset from the outline,
   so selection does not resize or move them.
   Don't stack unused-input dimming with the spotlight on unfocused chunks.
+  Comparison colours are shared: A/Local/removals red, B/Remote/additions green,
+  identical/Base/neutral result labels gray, changes/warnings amber, focus/manual edits blue.
+  Diff and merge overview markers use the same painter: A red, B green, both split red/green.
+  They describe changed inputs, never resolution status; result lines retain their source colours.
 - **Updates:** MiniDiff menu has an About version modal and a manual update check.
   Automatic checks run on startup and every 24 hours (shared across windows,
   monotonic clock, logic-frame timer); respect `auto_update` and never interrupt

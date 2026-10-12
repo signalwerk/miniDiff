@@ -17,6 +17,26 @@ use objc2::{AnyThread, ClassType, class, define_class, msg_send, sel};
 use super::{Incoming, push};
 use crate::source::Entry;
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Point { x: f64, y: f64 }
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Size { width: f64, height: f64 }
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Rect { origin: Point, size: Size }
+// AppKit geometry uses Core Graphics double-precision structs on 64-bit macOS.
+unsafe impl objc2::Encode for Point {
+    const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct("CGPoint", &[objc2::encode::Encoding::Double, objc2::encode::Encoding::Double]);
+}
+unsafe impl objc2::Encode for Size {
+    const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct("CGSize", &[objc2::encode::Encoding::Double, objc2::encode::Encoding::Double]);
+}
+unsafe impl objc2::Encode for Rect {
+    const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct("CGRect", &[Point::ENCODING, Size::ENCODING]);
+}
+
 const fn four_cc(s: &[u8; 4]) -> u32 {
     ((s[0] as u32) << 24) | ((s[1] as u32) << 16) | ((s[2] as u32) << 8) | s[3] as u32
 }
@@ -107,6 +127,41 @@ unsafe fn paths_from_event(event: *mut AnyObject) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// Center an app-wide window on its own display, using AppKit's screen coordinates.
+pub fn center_window(title: &str) -> bool {
+    if objc2::MainThreadMarker::new().is_none() { return false; }
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let windows: *mut AnyObject = msg_send![app, windows];
+        let count: usize = msg_send![windows, count];
+        for i in 0..count {
+            let window: *mut AnyObject = msg_send![windows, objectAtIndex: i];
+            let name: *mut AnyObject = msg_send![window, title];
+            let utf8: *const c_char = msg_send![name, UTF8String];
+            if !utf8.is_null() && CStr::from_ptr(utf8).to_string_lossy() == title {
+                let screen: *mut AnyObject = msg_send![window, screen];
+                if screen.is_null() { return false; }
+                let display: Rect = msg_send![screen, visibleFrame];
+                let mut frame: Rect = msg_send![window, frame];
+                if frame.size.width > display.size.width || frame.size.height > display.size.height {
+                    frame.size.width = frame.size.width.min(display.size.width);
+                    frame.size.height = frame.size.height.min(display.size.height);
+                    let _: () = msg_send![window, setFrame: frame, display: true];
+                }
+                let origin = Point {
+                    x: display.origin.x + (display.size.width - frame.size.width) / 2.0,
+                    y: display.origin.y + (display.size.height - frame.size.height) / 2.0,
+                };
+                let _: () = msg_send![window, setFrameOrigin: origin];
+                let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null_mut::<AnyObject>()];
+                let _: () = msg_send![app, activateIgnoringOtherApps: true];
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Must be called before the event loop starts (i.e. before `eframe::run_native`).

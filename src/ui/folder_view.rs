@@ -379,7 +379,7 @@ impl FolderView {
         ui.add_space(ui.available_height() / 4.0);
         ui.vertical_centered(|ui| {
             if c.changed + c.left_only + c.right_only == 0 {
-                ui.label(RichText::new("✔").size(44.0).color(pal.add_fg));
+            ui.label(RichText::new("✔").size(44.0).color(pal.text_dim));
                 ui.label(RichText::new("Folders are identical").size(20.0).strong());
                 ui.label(RichText::new(format!("{} files compared", c.same)).color(pal.text_dim));
             } else {

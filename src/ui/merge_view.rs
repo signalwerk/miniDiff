@@ -12,7 +12,7 @@ use egui::{
     Ui, UiBuilder, Vec2, pos2, vec2,
 };
 
-use super::code::{CodeStyle, line_job, paint_filler, paint_job, paint_line_number};
+use super::code::{CodeStyle, line_job, paint_filler, paint_job, paint_line_number, ChangeSides, paint_change_marker};
 use super::{ViewSettings, icon_button, keys_free, toggle, toolbar_frame, dialog_modal, dialog_footer};
 use crate::highlight::{Highlights, highlight};
 use crate::diff::{DiffOptions, diff_docs};
@@ -93,6 +93,38 @@ fn includes(resolution: &Resolution, col: Col) -> bool {
 fn dim_color(pal: &Palette, alpha: u8) -> Color32 {
     let [r, g, b, _] = pal.bg.to_array();
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
+}
+
+fn change_sides(chunk: &crate::merge::Chunk, has_base: bool) -> Option<ChangeSides> {
+    match chunk.kind {
+        ChunkKind::Stable => None,
+        ChunkKind::Local => Some(ChangeSides::A),
+        ChunkKind::Remote => Some(ChangeSides::B),
+        ChunkKind::Conflict if !has_base && chunk.remote.is_empty() => Some(ChangeSides::A),
+        ChunkKind::Conflict if !has_base && chunk.local.is_empty() => Some(ChangeSides::B),
+        ChunkKind::Both | ChunkKind::Conflict => Some(ChangeSides::Both),
+    }
+}
+
+fn origin_color(origin: Origin, pal: &Palette) -> Color32 {
+    match origin {
+        Origin::Local => pal.del_fg,
+        Origin::Remote => pal.add_fg,
+        Origin::Custom => pal.accent,
+        Origin::Marker => pal.conflict,
+        Origin::Base | Origin::Stable => pal.gutter_fg,
+    }
+}
+
+fn resolution_color(resolution: &Resolution, pal: &Palette) -> Color32 {
+    match resolution {
+        Resolution::Local => pal.del_fg,
+        Resolution::Remote => pal.add_fg,
+        Resolution::Base => pal.text_dim,
+        Resolution::Custom(_) => pal.accent,
+        Resolution::Unresolved => pal.conflict,
+        Resolution::LocalThenRemote | Resolution::RemoteThenLocal => pal.mod_fg,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -382,15 +414,14 @@ impl MergeView {
         let c = &self.doc.chunks[ci];
         match c.kind {
             ChunkKind::Stable => None,
-            ChunkKind::Conflict if c.resolution == Resolution::Unresolved => Some(pal.conflict),
-            ChunkKind::Conflict => Some(pal.add_fg),
-            ChunkKind::Local | ChunkKind::Both => Some(pal.local),
-            ChunkKind::Remote => Some(pal.remote),
+            ChunkKind::Conflict | ChunkKind::Both => Some(pal.mod_fg),
+            ChunkKind::Local => Some(pal.del_fg),
+            ChunkKind::Remote => Some(pal.add_fg),
         }
     }
 
     fn rebuild_markers(&mut self) {
-        // Colours depend on theme and resolution, so they are picked at paint time.
+        // Source colours depend on the theme and are picked at paint time.
         let mut markers: Vec<(usize, usize, usize)> = Vec::new();
         for (idx, it) in self.items.iter().enumerate() {
             let ci = it.chunk();
@@ -550,9 +581,9 @@ impl MergeView {
                 let total = self.doc.conflict_count();
                 let open = self.doc.unresolved_count();
                 if total == 0 {
-                    ui.label(RichText::new("✔ Merged automatically — no conflicts").color(pal.add_fg).strong());
+                    ui.label(RichText::new("✔ Merged automatically — no conflicts").color(pal.text_dim).strong());
                 } else if open == 0 {
-                    ui.label(RichText::new(format!("✔ All {total} conflicts resolved")).color(pal.add_fg).strong());
+                    ui.label(RichText::new(format!("✔ All {total} conflicts resolved")).color(pal.text_dim).strong());
                 } else {
                     if ui.add(egui::Label::new(
                         RichText::new(format!("⚠ {open} of {total} conflict{} unresolved", if total == 1 { "" } else { "s" }))
@@ -568,10 +599,10 @@ impl MergeView {
                 }
                 if total > 0 {
                     ui.separator();
-                    if ui.button(RichText::new("All A").color(pal.local)).on_hover_text("Resolve every conflict with A (local)").clicked() {
+                    if ui.button(RichText::new("All A").color(pal.del_fg)).on_hover_text("Resolve every conflict with A (local)").clicked() {
                         self.resolve_all(Resolution::Local);
                     }
-                    if ui.button(RichText::new("All B").color(pal.remote)).on_hover_text("Resolve every conflict with B (remote)").clicked() {
+                    if ui.button(RichText::new("All B").color(pal.add_fg)).on_hover_text("Resolve every conflict with B (remote)").clicked() {
                         self.resolve_all(Resolution::Remote);
                     }
                 }
@@ -627,10 +658,10 @@ impl MergeView {
         p.hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, pal.border));
         for (col, r) in self.columns(body, show_base) {
             let (tag, color, text) = match col {
-                Col::Local => ("A", pal.local, self.labels[0].as_str()),
+                Col::Local => ("A", pal.del_fg, self.labels[0].as_str()),
                 Col::Base => ("◇", pal.text_dim, self.labels[1].as_str()),
-                Col::Result => ("=", pal.add_fg, "Result"),
-                Col::Remote => ("B", pal.remote, self.labels[2].as_str()),
+                Col::Result => ("=", pal.text_dim, "Result"),
+                Col::Remote => ("B", pal.add_fg, self.labels[2].as_str()),
             };
             let clip = p.with_clip_rect(r.shrink2(vec2(2.0, 0.0)));
             let badge = Rect::from_center_size(pos2(r.left() + 18.0, r.center().y), vec2(18.0, 16.0));
@@ -744,8 +775,8 @@ impl MergeView {
             if c.is_change() {
                 for (col, cr) in &cols {
                     let color = match col {
-                        Col::Local => pal.local,
-                        Col::Remote => pal.remote,
+                        Col::Local => pal.del_fg,
+                        Col::Remote => pal.add_fg,
                         Col::Base => pal.text_dim,
                         Col::Result => continue,
                     };
@@ -876,13 +907,13 @@ impl MergeView {
             let x0 = cr.left() + 8.0;
             match col {
                 Col::Local => {
-                    let (_, hit) = chip(x0, if uses_local { "✔ Included A" } else { "Use A  ▶" }, uses_local, pal.local, "Take A (local)  — key a / 1", 1);
+                    let (_, hit) = chip(x0, if uses_local { "✔ Included A" } else { "Use A  ▶" }, uses_local, pal.del_fg, "Take A (local)  — key a / 1", 1);
                     if hit {
                         *clicked = Some((ci, Resolution::Local));
                     }
                 }
                 Col::Remote => {
-                    let (_, hit) = chip(x0, if uses_remote { "✔ Included B" } else { "◀  Use B" }, uses_remote, pal.remote, "Take B (remote)  — key b / 2", 2);
+                    let (_, hit) = chip(x0, if uses_remote { "✔ Included B" } else { "◀  Use B" }, uses_remote, pal.add_fg, "Take B (remote)  — key b / 2", 2);
                     if hit {
                         *clicked = Some((ci, Resolution::Remote));
                     }
@@ -896,20 +927,20 @@ impl MergeView {
                 Col::Result => {
                     let (label, lc) = match (c.kind, res) {
                         (ChunkKind::Conflict, Resolution::Unresolved) => ("⚠ Conflict".to_owned(), pal.conflict),
-                        (ChunkKind::Conflict, r) => (format!("✔ {}", describe(r)), pal.add_fg),
-                        (_, r) if *r == default_resolution(c.kind) => (format!("Auto · {}", describe(r)), pal.text_dim),
-                        (_, r) => (format!("✔ {}", describe(r)), pal.add_fg),
+                        (ChunkKind::Conflict, r) => (format!("✔ {}", describe(r)), resolution_color(r, pal)),
+                        (_, r) if *r == default_resolution(c.kind) => (format!("Auto · {}", describe(r)), resolution_color(r, pal)),
+                        (_, r) => (format!("✔ {}", describe(r)), resolution_color(r, pal)),
                     };
                     let galley = p.layout_no_wrap(label, FontId::proportional(11.5), lc);
                     let gw = galley.size().x;
                     p.galley(pos2(x0, r.center().y - galley.size().y / 2.0), galley, lc);
                     let mut x = x0 + gw + 10.0;
-                    let (nx, hit) = chip(x, "A+B", *res == Resolution::LocalThenRemote, pal.accent, "A then B  — key 3", 4);
+                    let (nx, hit) = chip(x, "A+B", *res == Resolution::LocalThenRemote, pal.mod_fg, "A then B  — key 3", 4);
                     x = nx;
                     if hit {
                         *clicked = Some((ci, Resolution::LocalThenRemote));
                     }
-                    let (nx, hit) = chip(x, "B+A", *res == Resolution::RemoteThenLocal, pal.accent, "B then A  — key 4", 5);
+                    let (nx, hit) = chip(x, "B+A", *res == Resolution::RemoteThenLocal, pal.mod_fg, "B then A  — key 4", 5);
                     x = nx;
                     if hit {
                         *clicked = Some((ci, Resolution::RemoteThenLocal));
@@ -953,8 +984,8 @@ impl MergeView {
                     c.local.len(),
                     &self.local,
                     &self.local_hl,
-                    touched.then_some(pal.local_bg),
-                    if touched { pal.local } else { pal.gutter_fg },
+                    touched.then_some(pal.del_bg),
+                    if touched { pal.del_fg } else { pal.gutter_fg },
                 )
             }
             Col::Remote => {
@@ -964,8 +995,8 @@ impl MergeView {
                     c.remote.len(),
                     &self.remote,
                     &self.remote_hl,
-                    touched.then_some(pal.remote_bg),
-                    if touched { pal.remote } else { pal.gutter_fg },
+                    touched.then_some(pal.add_bg),
+                    if touched { pal.add_fg } else { pal.gutter_fg },
                 )
             }
             Col::Base => (
@@ -981,8 +1012,8 @@ impl MergeView {
                 let bg = if k < self.result_lens[ci] {
                     match self.result_origins[idx] {
                         Origin::Stable => None,
-                        Origin::Local => Some(pal.local_bg),
-                        Origin::Remote => Some(pal.remote_bg),
+                        Origin::Local => Some(pal.del_bg),
+                        Origin::Remote => Some(pal.add_bg),
                         Origin::Base => Some(pal.base_bg),
                         Origin::Custom => Some(pal.custom_bg),
                         Origin::Marker => Some(pal.conflict_bg),
@@ -990,7 +1021,8 @@ impl MergeView {
                 } else {
                     None
                 };
-                let nc = if change { pal.add_fg } else { pal.gutter_fg };
+                let nc = self.result_origins.get(idx).filter(|_| k < self.result_lens[ci])
+                    .map_or(pal.gutter_fg, |&origin| origin_color(origin, pal));
                 (idx, self.result_lens[ci], &self.result, &self.result_hl, bg, nc)
             }
         };
@@ -1004,9 +1036,17 @@ impl MergeView {
             p.rect_filled(rect, 0.0, bg);
         }
         let g = Rect::from_min_size(rect.min, vec2(gw, rect.height()));
-        if bg.is_none() {
-            p.rect_filled(g, 0.0, pal.gutter_bg);
-        }
+        let gutter_bg = match col {
+            Col::Local if bg.is_some() => pal.del_gutter,
+            Col::Remote if bg.is_some() => pal.add_gutter,
+            Col::Result => match self.result_origins[line_idx] {
+                Origin::Local => pal.del_gutter,
+                Origin::Remote => pal.add_gutter,
+                _ => bg.unwrap_or(pal.gutter_bg),
+            },
+            _ => bg.unwrap_or(pal.gutter_bg),
+        };
+        p.rect_filled(g, 0.0, gutter_bg);
         paint_line_number(p, g, Some(line_idx + 1), num_color, st);
         let is_marker = col == Col::Result && self.result_origins.get(line_idx) == Some(&Origin::Marker);
         let job = if is_marker {
@@ -1017,12 +1057,12 @@ impl MergeView {
             j
         } else {
             let (emph, color) = match col {
-                Col::Local => (&self.input_emph[ci][0][k], pal.local_emph),
+                Col::Local => (&self.input_emph[ci][0][k], pal.del_emph),
                 Col::Base => (&self.input_emph[ci][1][k], pal.base_emph),
-                Col::Remote => (&self.input_emph[ci][2][k], pal.remote_emph),
+                Col::Remote => (&self.input_emph[ci][2][k], pal.add_emph),
                 Col::Result => (&self.result_emph[line_idx], match self.result_origins[line_idx] {
-                    Origin::Local => pal.local_emph,
-                    Origin::Remote => pal.remote_emph,
+                    Origin::Local => pal.del_emph,
+                    Origin::Remote => pal.add_emph,
                     Origin::Base => pal.base_emph,
                     Origin::Custom => pal.custom_emph,
                     _ => Color32::TRANSPARENT,
@@ -1042,10 +1082,10 @@ impl MergeView {
         let total = (self.items.len() as f32).max(self.last_view_h / row_h).max(1.0);
         let h = rect.height();
         for &(s, e, ci) in &self.markers {
-            let Some(color) = self.chunk_color(ci, pal) else { continue };
+            let Some(sides) = change_sides(&self.doc.chunks[ci], self.doc.has_base) else { continue };
             let y0 = rect.top() + s as f32 / total * h;
-            let y1 = (rect.top() + e as f32 / total * h).max(y0 + 3.0);
-            p.rect_filled(Rect::from_x_y_ranges(rect.left() + 3.0..=rect.right() - 2.0, y0..=y1), 1.0, color);
+            let y1 = (rect.top() + e as f32 / total * h).max(y0 + 2.0);
+            paint_change_marker(p, Rect::from_x_y_ranges(rect.left() + 3.0..=rect.right() - 2.0, y0..=y1), sides, pal);
         }
         if content_h > self.last_view_h {
             let t0 = rect.top() + self.last_offset / content_h * h;
@@ -1174,6 +1214,29 @@ fn describe(r: &Resolution) -> &'static str {
 mod tests {
     use super::*;
     use crate::merge::Chunk;
+
+    #[test]
+    fn overview_tracks_changed_inputs_and_result_colors_track_origins() {
+        for pal in [&crate::theme::DARK, &crate::theme::LIGHT] {
+            let mut view = view(Resolution::Unresolved);
+            let chunk = &mut view.doc.chunks[0];
+            for resolution in [Resolution::Unresolved, Resolution::Local, Resolution::Remote, Resolution::Base,
+                Resolution::LocalThenRemote, Resolution::Custom(vec!["edited".into()])] {
+                chunk.resolution = resolution;
+                assert_eq!(change_sides(chunk, true), Some(ChangeSides::Both));
+            }
+            chunk.remote.clear();
+            assert_eq!(change_sides(chunk, false), Some(ChangeSides::A));
+            assert_eq!(change_sides(chunk, true), Some(ChangeSides::Both));
+            chunk.remote = std::mem::take(&mut chunk.local);
+            assert_eq!(change_sides(chunk, false), Some(ChangeSides::B));
+            assert_eq!(origin_color(Origin::Local, pal), pal.del_fg);
+            assert_eq!(origin_color(Origin::Remote, pal), pal.add_fg);
+            assert_eq!(origin_color(Origin::Stable, pal), pal.gutter_fg);
+            assert_eq!(resolution_color(&Resolution::Local, pal), pal.del_fg);
+            assert_eq!(resolution_color(&Resolution::Remote, pal), pal.add_fg);
+        }
+    }
 
     #[test]
     fn clicking_unresolved_count_skips_resolved_changes_and_wraps() {

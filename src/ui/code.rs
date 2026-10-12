@@ -9,6 +9,21 @@ use crate::highlight::{Hl, Span};
 use crate::text::TAB_WIDTH;
 use crate::theme::Palette;
 
+/// The overview always describes changed inputs, independent of merge resolution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeSides { A, B, Both }
+
+pub fn paint_change_marker(painter: &Painter, rect: Rect, sides: ChangeSides, pal: &Palette) {
+    match sides {
+        ChangeSides::A => { painter.rect_filled(rect, 1.0, pal.del_fg); }
+        ChangeSides::B => { painter.rect_filled(rect, 1.0, pal.add_fg); }
+        ChangeSides::Both => {
+            painter.rect_filled(rect.with_max_x(rect.center().x), 0.0, pal.del_fg);
+            painter.rect_filled(rect.with_min_x(rect.center().x), 0.0, pal.add_fg);
+        }
+    }
+}
+
 /// Font metrics for the code views.
 #[derive(Clone)]
 pub struct CodeStyle {

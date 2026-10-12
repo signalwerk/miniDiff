@@ -265,6 +265,8 @@ Use **MiniDiff → About MiniDiff** for version information and **MiniDiff → C
 for Updates…** to check manually. **MiniDiff → Preferences…** (`⌘,`) lets you
 choose System, Light, or Dark appearance and turn automatic updates on or off.
 Recent macOS versions label that menu item **Settings…**.
+Preferences and Keyboard Shortcuts open in their own app-wide windows, centered
+on the display. They remain available when no comparison window is open.
 **Help → Keyboard Shortcuts** shows the available shortcuts. These are in the
 macOS menu bar and File actions apply to the focused window.
 Automatic checks run on startup and every 24 hours
