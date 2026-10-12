@@ -83,6 +83,10 @@ pub fn folders() -> (Entry, Entry) {
     (tree("left"), tree("right"))
 }
 
+pub fn files() -> (Entry, Entry) {
+    (file("left/src/util/format.ts"), file("right/src/util/format.ts"))
+}
+
 /// (base, local, remote)
 pub fn merge() -> (Entry, Entry, Entry) {
     (file("merge/base.rs"), file("merge/local.rs"), file("merge/remote.rs"))

@@ -42,9 +42,7 @@ h1 { font-size: clamp(48px, 5.7vw, 68px); line-height: 1.08; margin: 22px 0 10px
 .meta { font-size: 14px; color: var(--muted); margin: 17px 0 0; }
 figure { margin: 0; }
 .screenshot-title { width: min(100%, 960px); margin: 0 auto 20px; }
-.screenshot-frame { padding: 9px; background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; }
-.screenshot-frame img { display: block; width: 100%; height: auto; border-radius: 6px; }
-.main-shot .screenshot-frame { box-shadow: 0 12px 32px rgb(0 0 0 / 7%); }
+figure > img { display: block; width: 100%; height: auto; }
 figcaption { margin-top: 12px; text-align: center; color: var(--muted); font-size: 14px; }
 h2 { font-size: clamp(24px, 3vw, 30px); line-height: 1.25; margin: 0; }
 .features { padding-top: 64px; }
@@ -82,7 +80,5 @@ footer { border-top: 1px solid var(--rule); }
   .feature-list, .detail-shots { grid-template-columns: 1fr; }
   .detail-shots { gap: 24px; margin-top: 14px; }
   .feature-list li { padding-top: 19px; padding-bottom: 21px; }
-  .screenshot-frame { padding: 5px; border-radius: 8px; }
-  .screenshot-frame img { border-radius: 4px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

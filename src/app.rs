@@ -1,7 +1,10 @@
 //! Top-level application state and routing between screens.
 
 use std::path::PathBuf;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Wake, Waker};
 
 use egui::{
     Align, Align2, FontId, Id, Key, LayerId, Layout, Margin, Modifiers, Order, RichText, Stroke, Ui,
@@ -66,11 +69,26 @@ enum Screen {
     Merge(Box<MergeView>),
 }
 
+/// Nonblocking picker owned by the window that requested it.
+struct PendingPicker {
+    slot: usize,
+    result: Pin<Box<dyn Future<Output = Option<PathBuf>> + Send>>,
+}
+
+struct PickerWake(egui::Context);
+
+impl Wake for PickerWake {
+    fn wake(self: Arc<Self>) {
+        self.0.request_repaint_of(egui::ViewportId::ROOT);
+    }
+}
+
 /// State that belongs to a single native window.
 struct DiffWindow {
     id: egui::ViewportId,
     screen: Screen,
     slots: [Option<Entry>; 2],
+    picker: Option<PendingPicker>,
     toast: Option<(String, bool, f64)>,
     close_dialog: bool,
     about_open: bool,
@@ -87,6 +105,7 @@ impl DiffWindow {
             id,
             screen: Screen::Welcome,
             slots: [None, None],
+            picker: None,
             toast: None,
             close_dialog: false,
             about_open: false,
@@ -239,6 +258,17 @@ impl AppState {
         }
         for incoming in platform::take() {
             self.route_incoming(incoming, ctx);
+        }
+        // Sheets complete even while their owning viewport is backgrounded.
+        for window in self.root.iter_mut().chain(self.windows.iter_mut()).filter(|w| !w.closed) {
+            WindowUi {
+                window,
+                settings: &mut self.settings,
+                updater: &mut self.updater,
+                manual_check: &mut self.manual_check,
+                requests: &mut self.requests,
+                restart: &mut self.restart,
+            }.poll_picker(ctx);
         }
         // Deferred windows can skip their UI callback while occluded. Their
         // close events still arrive in the root's viewport inventory.
@@ -557,18 +587,41 @@ impl WindowUi<'_> {
             _ => {}
         }
     }
-    fn pick(&mut self, folder: bool, slot: usize) {
-        let dialog = rfd::FileDialog::new().set_title(if slot == 0 { "Choose A" } else { "Choose B" });
-        let picked = if folder {
-            dialog.pick_folder()
-        } else {
-            dialog.pick_file()
-        };
-        if let Some(p) = picked {
-            self.open_incoming(Incoming {
-                entries: vec![Entry::Fs(p)],
-                slot: Some(slot),
-            });
+    fn pick(&mut self, slot: usize, ctx: &egui::Context) {
+        if self.window.picker.is_some() {
+            return;
+        }
+        // Create the native sheet on the main thread; never run AppKit's
+        // blocking modal loop from inside an egui/winit event callback.
+        let dialog = rfd::AsyncFileDialog::new().set_title(if slot == 0 { "Choose A" } else { "Choose B" });
+        #[cfg(target_os = "macos")]
+        let result = dialog.pick_file_or_folder();
+        // rfd exposes its combined picker only on macOS. Keep source ports
+        // buildable until their native backends support the same selection.
+        #[cfg(not(target_os = "macos"))]
+        let result = dialog.pick_file();
+        self.window.picker = Some(PendingPicker {
+            slot,
+            result: Box::pin(async move { result.await.map(|file| file.path().to_owned()) }),
+        });
+        self.poll_picker(ctx);
+    }
+
+    fn poll_picker(&mut self, ctx: &egui::Context) {
+        let Some(picker) = &mut self.window.picker else { return };
+        let waker = Waker::from(Arc::new(PickerWake(ctx.clone())));
+        let Poll::Ready(path) = picker.result.as_mut().poll(&mut Context::from_waker(&waker)) else { return };
+        let slot = picker.slot;
+        self.window.picker = None;
+        if let Some(path) = path {
+            // A drop or menu action may already have opened a comparison.
+            // Preserve it and route the selection to another welcome window.
+            let incoming = Incoming {
+                entries: vec![Entry::Fs(path)],
+                slot: self.window.accepts_incoming().then_some(slot),
+            };
+            self.open_incoming(incoming);
+            ctx.request_repaint_of(self.window.id);
         }
     }
 
@@ -631,10 +684,15 @@ impl WindowUi<'_> {
             .stroke(Stroke::NONE);
         egui::Panel::top("app-bar").frame(frame).show(ui, |ui| {
             ui.horizontal(|ui| {
+                if matches!(self.window.screen, Screen::File(_) | Screen::Folder(_))
+                    && ui.button("⇄ Swap")
+                        .on_hover_text(format!("Swap A and B  ({}⇧S)", cmd()))
+                        .clicked()
+                {
+                    self.swap();
+                }
                 let crumb = match &self.window.screen {
-                    Screen::Welcome => None,
-                    Screen::File(fv) => Some(("File", short(&fv.left_label), short(&fv.right_label))),
-                    Screen::Folder(f) => Some(("Folder", f.left.name(), f.right.name())),
+                    Screen::Welcome | Screen::File(_) | Screen::Folder(_) => None,
                     Screen::Merge(m) => Some(("Merge", m.file_name.clone(), String::new())),
                 };
                 if let Some((kind, a, b)) = crumb {
@@ -649,17 +707,10 @@ impl WindowUi<'_> {
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     self.update_ui(ui);
-                    if matches!(self.window.screen, Screen::File(_) | Screen::Folder(_)) {
-                        if ui.button("⟳").on_hover_text(format!("Reload  ({}R)", cmd())).clicked() {
-                            self.reload();
-                        }
-                        if ui
-                            .button("⇄ Swap")
-                            .on_hover_text(format!("Swap A and B  ({}⇧S)", cmd()))
-                            .clicked()
-                        {
-                            self.swap();
-                        }
+                    if matches!(self.window.screen, Screen::File(_) | Screen::Folder(_))
+                        && ui.button("⟳").on_hover_text(format!("Reload  ({}R)", cmd())).clicked()
+                    {
+                        self.reload();
                     }
                 });
             });
@@ -865,42 +916,119 @@ impl WindowUi<'_> {
     }
 }
 
-fn help_shortcuts(ui: &mut Ui) {
-    let c = cmd();
-    let rows: &[(&str, String)] = &[
-        (
-            "Next / previous change",
-            format!("n · p   ({a}↓ · {a}↑)", a = crate::ui::alt()),
-        ),
-        ("Next / previous file", format!("{c}↓ · {c}↑")),
-        ("Side by side ⇄ unified", "u".into()),
-        ("Collapse unchanged", "c".into()),
-        ("Ignore whitespace", "w".into()),
-        ("Font size", "+ · −".into()),
-        ("Toggle file list", "b".into()),
-        ("Merge: take A / B", "a · b   (1 · 2)".into()),
-        ("Merge: A+B / B+A / base", "3 · 4 · 0".into()),
-        ("Merge: edit / reset", "e · r".into()),
-        ("Save merge", format!("{c}S")),
-        ("Swap sides", format!("{c}⇧S")),
-        ("Reload", format!("{c}R")),
-        ("New window / close window", format!("{c}N · {c}W")),
-        ("Start screen", format!("{c}O")),
-        ("Preferences", format!("{c},")),
-    ];
-    ui.set_min_width(320.0);
-    ui.label(RichText::new("Keyboard shortcuts").strong());
+fn information_modal(ctx: &egui::Context, id: &str) -> egui::Modal {
+    let pal = theme::palette(ctx);
+    egui::Modal::new(Id::new(id)).frame(
+        egui::Frame::popup(&ctx.global_style())
+            .fill(pal.panel)
+            .stroke(Stroke::new(1.0, pal.border))
+            .corner_radius(12)
+            .inner_margin(Margin::same(24)),
+    )
+}
+
+fn information_footer(ui: &mut Ui) -> bool {
+    ui.add_space(16.0);
     ui.separator();
-    egui::Grid::new("shortcuts")
+    ui.add_space(8.0);
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.add_sized([76.0, 28.0], egui::Button::new("Close")).clicked()
+    }).inner
+}
+
+fn shortcut_section(ui: &mut Ui, title: &str, rows: &[(&str, String)]) {
+    let pal = theme::palette(ui.ctx());
+    ui.label(RichText::new(title).size(14.0).strong().color(pal.text));
+    ui.add_space(6.0);
+    egui::Grid::new(title)
         .num_columns(2)
-        .spacing([24.0, 4.0])
+        .spacing([16.0, 6.0])
         .show(ui, |ui| {
-            for (what, keys) in rows {
-                ui.label(*what);
-                ui.label(RichText::new(keys).monospace().weak());
+            for (action, keys) in rows {
+                ui.allocate_ui_with_layout(vec2(240.0, 22.0), Layout::left_to_right(Align::Center), |ui| {
+                    ui.set_min_width(240.0);
+                    ui.label(RichText::new(*action).size(13.0).color(pal.text));
+                });
+                egui::Frame::new()
+                    .fill(pal.toolbar)
+                    .stroke(Stroke::new(1.0, pal.border))
+                    .corner_radius(4)
+                    .inner_margin(Margin::symmetric(6, 2))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(keys).monospace().size(12.0).color(pal.text));
+                    });
                 ui.end_row();
             }
         });
+}
+
+fn help_shortcuts(ui: &mut Ui) {
+    let c = cmd();
+    let a = crate::ui::alt();
+    let pal = theme::palette(ui.ctx());
+    ui.set_width(440.0_f32.min(ui.ctx().content_rect().width() - 80.0));
+    ui.label(RichText::new("Keyboard shortcuts").size(22.0).strong());
+    ui.add_space(4.0);
+    ui.label(RichText::new("Single-key shortcuts apply when you aren’t editing text.").size(13.0).color(pal.text_dim));
+    ui.add_space(18.0);
+    ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+    let max_height = (ui.ctx().content_rect().height() - 240.0).max(120.0);
+    egui::ScrollArea::vertical()
+        .id_salt("shortcut-list")
+        .max_height(max_height)
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            shortcut_section(ui, "Navigation", &[
+                ("Next / previous change", "n / p · j / k".into()),
+                ("Alternate navigation", format!("{a}↓ / {a}↑")),
+                ("Next / previous file", format!("{c}↓ / {c}↑")),
+            ]);
+            ui.add_space(18.0);
+            shortcut_section(ui, "Comparison", &[
+                ("Side by side / unified", "u".into()),
+                ("Collapse unchanged lines", "c".into()),
+                ("Ignore whitespace", "w".into()),
+                ("Increase / decrease font size", "+ / −".into()),
+                ("Toggle file list", "b".into()),
+                ("Swap sides", format!("{c}⇧S")),
+                ("Reload files", format!("{c}R")),
+            ]);
+            ui.add_space(18.0);
+            shortcut_section(ui, "Merge", &[
+                ("Take A / B", "a / b · 1 / 2".into()),
+                ("Combine A+B / B+A", "3 / 4".into()),
+                ("Take base", "0".into()),
+                ("Edit / reset chunk", "e / r".into()),
+                ("Save result", format!("{c}S")),
+            ]);
+            ui.add_space(18.0);
+            shortcut_section(ui, "Windows & settings", &[
+                ("New / close window", format!("{c}N / {c}W")),
+                ("Start screen", format!("{c}O")),
+                ("Preferences", format!("{c},")),
+            ]);
+        });
+}
+
+fn about_contents(ui: &mut Ui) {
+    let pal = theme::palette(ui.ctx());
+    ui.set_width(320.0);
+    ui.vertical_centered(|ui| {
+        let (icon, _) = ui.allocate_exact_size(vec2(64.0, 64.0), egui::Sense::hover());
+        welcome::paint_logo(ui.painter(), icon.center(), 64.0);
+        ui.add_space(12.0);
+        ui.label(RichText::new("About MiniDiff").size(22.0).strong());
+        ui.add_space(4.0);
+        ui.label(RichText::new(format!("Version {}", crate::update::CURRENT)).size(13.0).color(pal.text_dim));
+        ui.add_space(18.0);
+        ui.label(RichText::new("Compare text files and folders.").size(14.0));
+        ui.label(RichText::new("Resolve merge conflicts.").size(14.0));
+        ui.add_space(16.0);
+        ui.hyperlink_to("minidiff.signalwerk.ch", "https://minidiff.signalwerk.ch/");
+        ui.add_space(6.0);
+        ui.label(RichText::new("MIT licensed").size(12.0).color(pal.text_dim));
+    });
 }
 
 impl WindowUi<'_> {
@@ -944,10 +1072,13 @@ impl WindowUi<'_> {
 
         match welcome_action {
             WelcomeAction::None => {}
-            WelcomeAction::PickFile(i) => self.pick(false, i),
-            WelcomeAction::PickFolder(i) => self.pick(true, i),
+            WelcomeAction::Pick(i) => self.pick(i, &ctx),
             WelcomeAction::Clear(i) => self.window.slots[i] = None,
             WelcomeAction::Compare => self.compare_slots_if_ready(),
+            WelcomeAction::DemoFiles => {
+                let (a, b) = crate::demo::files();
+                self.compare(a, b, None);
+            }
             WelcomeAction::DemoFolders => self.open_demo(false),
             WelcomeAction::DemoMerge => self.open_demo(true),
             WelcomeAction::OpenRecent(i) => {
@@ -999,22 +1130,16 @@ impl WindowUi<'_> {
             if response.inner || response.should_close() { self.window.preferences_open = false; }
         }
         if self.window.shortcuts_open {
-            let response = egui::Modal::new(Id::new("keyboard-shortcuts")).show(&ctx, |ui| {
+            let response = information_modal(&ctx, "keyboard-shortcuts").show(&ctx, |ui| {
                 help_shortcuts(ui);
-                ui.separator();
-                ui.button("Close").clicked()
+                information_footer(ui)
             });
             if response.inner || response.should_close() { self.window.shortcuts_open = false; }
         }
         if self.window.about_open {
-            let response = egui::Modal::new(Id::new("about-minidiff")).show(&ctx, |ui| {
-                ui.set_min_width(260.0);
-                ui.heading("About MiniDiff");
-                ui.label(format!("Version {}", crate::update::CURRENT));
-                ui.label("A native text diff and merge tool for macOS.");
-                ui.hyperlink_to("MiniDiff homepage", "https://minidiff.signalwerk.ch/");
-                ui.separator();
-                ui.button("Close").clicked()
+            let response = information_modal(&ctx, "about-minidiff").show(&ctx, |ui| {
+                about_contents(ui);
+                information_footer(ui)
             });
             if response.inner || response.should_close() {
                 self.window.about_open = false;
@@ -1243,6 +1368,69 @@ mod tests {
     }
 
     #[test]
+    fn unified_picker_automatically_compares_files_or_folders() {
+        let ctx = egui::Context::default();
+        for (a, b, folders) in [
+            ("samples/left/src/util/format.ts", "samples/right/src/util/format.ts", false),
+            ("samples/left", "samples/right", true),
+        ] {
+            let mut app = app();
+            for (slot, path) in [a, b].into_iter().enumerate() {
+                app.root.as_mut().unwrap().picker = Some(PendingPicker {
+                    slot,
+                    result: Box::pin(std::future::ready(Some(PathBuf::from(path)))),
+                });
+                app.handle_root_events(&ctx);
+            }
+            let screen = &app.root.as_ref().unwrap().screen;
+            assert!(if folders { matches!(screen, Screen::Folder(_)) } else { matches!(screen, Screen::File(_)) });
+        }
+    }
+
+    #[test]
+    fn picker_results_are_applied_to_the_background_owner_and_cancel_is_harmless() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let id = egui::ViewportId::from_hash_of("picker-child");
+        let mut child = DiffWindow::new(id);
+        child.picker = Some(PendingPicker {
+            slot: 1,
+            result: Box::pin(std::future::ready(Some(PathBuf::from("samples/right/src/util/format.ts")))),
+        });
+        app.windows.push(child);
+        app.handle_root_events(&ctx);
+        assert!(app.root.as_ref().unwrap().slots.iter().all(Option::is_none));
+        let child = &mut app.windows[0];
+        assert!(child.slots[0].is_none());
+        assert_eq!(child.slots[1].as_ref().unwrap().fs_path(), Some(std::path::Path::new("samples/right/src/util/format.ts")));
+        assert!(child.picker.is_none());
+        child.picker = Some(PendingPicker { slot: 0, result: Box::pin(std::future::ready(None)) });
+        app.handle_root_events(&ctx);
+        assert!(app.windows[0].slots[0].is_none());
+        assert!(app.windows[0].slots[1].is_some());
+        assert!(app.windows[0].picker.is_none());
+    }
+
+    #[test]
+    fn picker_completion_preserves_a_comparison_opened_while_the_sheet_was_pending() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        root_ui(&mut app).open_demo(false);
+        app.root.as_mut().unwrap().picker = Some(PendingPicker {
+            slot: 0,
+            result: Box::pin(std::future::ready(Some(PathBuf::from("samples/left/src/util/format.ts")))),
+        });
+        app.handle_root_events(&ctx);
+        assert!(matches!(app.root.as_ref().unwrap().screen, Screen::Folder(_)));
+        assert!(app.root.as_ref().unwrap().picker.is_none());
+        assert_eq!(app.requests.len(), 1);
+        assert!(app.requests[0].slot.is_none());
+        app.handle_root_events(&ctx);
+        assert_eq!(app.windows.len(), 1);
+        assert!(app.windows[0].slots[0].is_some());
+    }
+
+    #[test]
     fn native_quit_protects_unsaved_merge_and_replaces_preferences_with_confirmation() {
         let ctx = egui::Context::default();
         let mut app = app();
@@ -1282,6 +1470,36 @@ mod tests {
         app.remove_closed_windows(&ctx);
         assert_eq!(app.windows.len(), 1);
         assert_ne!(app.windows[0].id, child);
+    }
+
+    #[test]
+    fn information_overlays_fit_small_windows_in_both_themes() {
+        for dark in [false, true] {
+            for size in [vec2(640.0, 400.0), vec2(880.0, 620.0)] {
+                for shortcuts in [false, true] {
+                    let ctx = egui::Context::default();
+                    install_fonts(&ctx);
+                    theme::install(&ctx);
+                    ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
+                    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                    let mut bounds = egui::Rect::NOTHING;
+                    for _ in 0..6 {
+                        let mut output = ctx.run_ui(egui::RawInput {
+                            screen_rect: Some(screen),
+                            ..Default::default()
+                        }, |ui| {
+                            bounds = information_modal(ui.ctx(), "fit-test").show(ui.ctx(), |ui| {
+                                if shortcuts { help_shortcuts(ui); } else { about_contents(ui); }
+                                information_footer(ui);
+                            }).response.rect;
+                        });
+                        output.textures_delta.clear();
+                    }
+                    assert!(screen.shrink(12.0).contains_rect(bounds),
+                        "overlay does not fit: dark={dark}, shortcuts={shortcuts}, size={size:?}, bounds={bounds:?}");
+                }
+            }
+        }
     }
 
     #[test]

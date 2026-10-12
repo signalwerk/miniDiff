@@ -390,23 +390,29 @@ impl FolderView {
         egui::Frame::new().inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
             header(ui, " A ", pal.del_fg, &self.left);
             header(ui, " B ", pal.add_fg, &self.right);
-            ui.add_space(4.0);
+            ui.add_space(12.0);
             ui.add(
                 egui::TextEdit::singleline(&mut self.search)
                     .hint_text("🔍 Filter files…")
                     .desired_width(f32::INFINITY),
             );
-            ui.add_space(2.0);
+            ui.add_space(12.0);
             let c = match &self.load {
                 Load::Ready { root, counts } => counts.get(&root.rel).copied().unwrap_or_default(),
                 Load::Loading { .. } => Counts::default(),
             };
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                chip(ui, &mut self.filter.changed, &format!("M {}", c.changed), pal.mod_fg, "Changed files");
-                chip(ui, &mut self.filter.left_only, &format!("A {}", c.left_only), pal.del_fg, "Only in A");
-                chip(ui, &mut self.filter.right_only, &format!("B {}", c.right_only), pal.add_fg, "Only in B");
-                chip(ui, &mut self.filter.same, &format!("= {}", c.same), pal.text_dim, "Identical files");
+            ui.label(RichText::new("Show files").size(11.0).color(pal.text_dim));
+            ui.add_space(2.0);
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                ui.horizontal_wrapped(|ui| {
+                    chip(ui, &mut self.filter.changed, &format!("Changed {}", c.changed), pal.mod_fg, "Show or hide changed files and comparison errors");
+                    chip(ui, &mut self.filter.same, &format!("Identical {}", c.same), pal.text_dim, "Show or hide files with identical contents");
+                });
+                ui.horizontal_wrapped(|ui| {
+                    chip(ui, &mut self.filter.left_only, &format!("Only in A {}", c.left_only), pal.del_fg, "Show or hide files present in A but missing from B");
+                    chip(ui, &mut self.filter.right_only, &format!("Only in B {}", c.right_only), pal.add_fg, "Show or hide files present in B but missing from A");
+                });
             });
         });
         ui.painter().hline(

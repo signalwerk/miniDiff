@@ -9,6 +9,7 @@ default-run = "minidiff"
 [dependencies]
 eframe = { version = "0.36", default-features = false, features = [
     "default_fonts",
+    "links",
     "wgpu",
     "persistence",
     "wayland",

@@ -16,19 +16,19 @@ A native diff and merge tool for **text files and folders**, built in Rust with
   - Word-level change emphasis.
   - Collapsible unchanged regions and an "ignore whitespace" option.
   - A change-overview strip that also works as the scrollbar.
-- **Folder diff**: a tree of changed, added, removed and identical files, with filters and search. Select a file to see its diff; step between changed files with `⌘↓` / `⌘↑`.
+- **Folder diff**: a tree of changed, added, removed and identical files, with filters and search. Select a file to see its diff; step between changed files with `Mod+↓` / `Mod+↑` (see [Keyboard](#keyboard)).
 - **Merge**: a three-way merge (diff3) with columns A · Result · B (plus Base on request).
   - Non-conflicting changes are merged automatically.
   - For each conflict you choose A, B, A+B, B+A or Base, or edit the result by hand.
   - It also reads files that already contain git conflict markers.
 - **Ways in**:
-  - Drop two items onto the window or the app icon.
+  - Drop two items onto the window. On macOS, you can also drop them onto the app icon.
   - Keep several comparisons open in separate windows. Dropping new items opens
     another view; an available start screen is reused. Use **File → New Window**
-    or `⌘N` for a new start screen, and `⌘W` to close the current window.
+    on macOS, or `Mod+N` for a new start screen, and `Mod+W` to close the current window.
   - Use the command line (`minidiff a b`).
   - Configure it as the git or Tower diff/merge tool.
-- **Self-updating** from GitHub Releases.
+- **Self-updating macOS bundles** from GitHub Releases.
 
 ## Scope
 
@@ -36,25 +36,45 @@ For now MiniDiff is about **text diffing and merging**. Binary files are not
 supported: MiniDiff only reports whether they are identical. Images might become
 an exception in the future, but no requests for them are accepted at the moment.
 
-**Platforms:** macOS builds are published with every release. Linux and Windows
-builds can be provided if beta testers
-[open a GitHub issue](https://github.com/signalwerk/miniDiff/issues) and give feedback.
+**Platforms:** MiniDiff uses a cross-platform Rust UI toolkit. Published releases
+currently provide macOS builds; Linux and Windows ports and testing are welcome.
+[Open a GitHub issue](https://github.com/signalwerk/miniDiff/issues) to request a
+build, report what works on your platform, or suggest a porting change through
+the [prompt contribution workflow](#contributing).
 
-## Install from GitHub Releases
+## Install
+
+### macOS
 
 1. Download [MiniDiff-macos-universal.zip](https://github.com/signalwerk/miniDiff/releases/latest/download/MiniDiff-macos-universal.zip) from [GitHub Releases](https://github.com/signalwerk/miniDiff/releases/latest) (Apple Silicon and Intel, macOS 11+).
 2. Unzip it and move the app to `/Applications/MiniDiff.app`.
 3. The app is not notarized, so open it the first time with right-click → **Open**.
 
-The command-line executable is `/Applications/MiniDiff.app/Contents/MacOS/minidiff`,
-the path used in the git configuration below.
+The command-line executable is `/Applications/MiniDiff.app/Contents/MacOS/minidiff`.
+See [Command line](#command-line) to make it available as `minidiff` on your `PATH`.
 
 On startup MiniDiff checks for new releases. When one is available, an
-**Update** button appears in the title bar: it downloads the release, checks its
+**Update** button appears in the app bar: it downloads the release, checks its
 SHA-256, replaces the app and restarts it. Automatic checks can be turned off
-in the **?** menu.
+in **MiniDiff → Preferences…** (shown as **Settings…** on recent macOS versions).
+
+### Other platforms
+
+Prebuilt Linux and Windows releases are not currently published. To try a source
+build, install Rust and your platform's native build tools, then run:
+
+```sh
+cargo build --release
+```
+
+The executable is `target/release/minidiff` (`minidiff.exe` on Windows).
+Native dependencies and platform integration may need additional work; please
+share build issues and testing results in a GitHub issue. The bundle installer
+and self-updater currently target macOS.
 
 ## Use from Tower
+
+The included Tower installer targets macOS:
 
 ```sh
 scripts/install-tower.sh
@@ -69,16 +89,20 @@ Tower keeps the file marked as conflicted.
 
 ## Use from git
 
+With `minidiff` on your `PATH`, add the following to your git configuration.
+Alternatively, replace `minidiff` in each `cmd` with the path to your executable
+(quote paths containing spaces).
+
 ```ini
 # ~/.gitconfig
 [diff]
     tool = minidiff
 [difftool "minidiff"]
-    cmd = /Applications/MiniDiff.app/Contents/MacOS/minidiff \"$LOCAL\" \"$REMOTE\"
+    cmd = minidiff \"$LOCAL\" \"$REMOTE\"
 [merge]
     tool = minidiff
 [mergetool "minidiff"]
-    cmd = /Applications/MiniDiff.app/Contents/MacOS/minidiff --merge \"$LOCAL\" \"$REMOTE\" \"$BASE\" \"$MERGED\"
+    cmd = minidiff --merge \"$LOCAL\" \"$REMOTE\" \"$BASE\" \"$MERGED\"
     trustExitCode = true
 ```
 
@@ -86,7 +110,10 @@ Tower keeps the file marked as conflicted.
 
 ## Command line
 
-After installing the GitHub release, you can run
+Run the executable directly or add its directory to your `PATH` to use the
+`minidiff` command (`minidiff.exe` on Windows).
+
+On macOS, after installing the GitHub release, you can run
 `/Applications/MiniDiff.app/Contents/MacOS/minidiff` directly. To use the shorter
 `minidiff` command, create a link in `~/.local/bin` and add that directory to your
 `PATH`:
@@ -104,24 +131,27 @@ minidiff --merge LOCAL REMOTE BASE MERGED
 minidiff --merge --local L --remote R --base B --output M
 ```
 
-For a source build, `scripts/bundle-macos.sh --install` installs the app and creates
+For a macOS source build, `scripts/bundle-macos.sh --install` installs the app and creates
 the same command-line link.
 
 ## Keyboard
 
+`Mod` means Command (`⌘`) on macOS and Ctrl on other platforms. `Alt` means
+Option (`⌥`) on macOS and Alt elsewhere.
+
 | Action | Keys |
 | --- | --- |
-| Next / previous change | `n` `p` (or `⌥↓` `⌥↑`, `j` `k`) |
-| Next / previous file (folder view) | `⌘↓` `⌘↑` |
+| Next / previous change | `n` `p` (or `Alt+↓` `Alt+↑`, `j` `k`) |
+| Next / previous file (folder view) | `Mod+↓` `Mod+↑` |
 | Side by side ⇄ unified / collapse / ignore whitespace | `u` / `c` / `w` |
 | Font size | `+` `−` |
 | Toggle file list | `b` |
 | Merge: take A / B / A+B / B+A / base | `a` `b` / `3` `4` / `0` |
 | Merge: edit / reset chunk | `e` / `r` |
-| Save merge | `⌘S` |
-| New window / close window | `⌘N` / `⌘W` |
-| Swap sides / reload / start screen | `⌘⇧S` / `⌘R` / `⌘O` |
-| Theme (auto / light / dark) | `⌘⇧L` |
+| Save merge | `Mod+S` |
+| New window / close window | `Mod+N` / `Mod+W` |
+| Swap sides / reload / start screen | `Mod+Shift+S` / `Mod+R` / `Mod+O` |
+| Preferences (appearance and automatic updates) | `Mod+,` |
 
 ## Contributing
 
@@ -140,7 +170,14 @@ Please keep requests within the [scope](#scope) above.
 ```sh
 cargo run -- samples/left samples/right     # compare folders
 cargo run -- samples/merge/conflicted.rs    # resolve conflict markers
+cargo build --release
 cargo test
+cargo clippy
+```
+
+For macOS app bundles:
+
+```sh
 scripts/bundle-macos.sh                     # → target/release/bundle/MiniDiff.app
 scripts/bundle-macos.sh universal           # arm64 + x86_64 (rustup target add x86_64-apple-darwin)
 ```
@@ -153,7 +190,7 @@ scripts/bundle-macos.sh universal           # arm64 + x86_64 (rustup target add 
 | `src/highlight.rs` | Tree-sitter highlighting split into per-line spans |
 | `src/update.rs` | Self-updater (manifest on GitHub Pages, assets on GitHub Releases) |
 | `src/ui/` | egui views: welcome, file, folder, merge; shared code-line renderer |
-| `src/platform/` | macOS "open documents" Apple Event handler (Dock icon drops) |
+| `src/platform/` | Platform integration; currently macOS menus and "open documents" Apple Events (Dock icon drops) |
 | `site/` | Landing page deployed to [minidiff.signalwerk.ch](https://minidiff.signalwerk.ch) |
 | `samples/` | Fixtures, also embedded as the in-app demo |
 
@@ -198,6 +235,8 @@ Existing app windows and personal settings are left alone. The landing page
 shows these narrow-window captures wider than its text column.
 
 ### Releases
+
+The current release pipeline publishes macOS bundles:
 
 ```sh
 scripts/release.sh patch        # or minor / major / 1.2.3

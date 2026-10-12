@@ -11,11 +11,11 @@ use crate::theme::Palette;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WelcomeAction {
     None,
-    PickFile(usize),
-    PickFolder(usize),
+    Pick(usize),
     Clear(usize),
     Compare,
     OpenRecent(usize),
+    DemoFiles,
     DemoFolders,
     DemoMerge,
 }
@@ -112,15 +112,19 @@ pub fn ui(
             let tip = "Drop two files or two folders anywhere in this window or on the app icon.\nDrop a single file with conflict markers to resolve it.";
             ui.label(RichText::new(tip).color(pal.text_dim).size(12.5));
             ui.add_space(6.0);
+            ui.label(RichText::new("No files at hand? Try a demo.").color(pal.text_dim).size(12.5));
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
-                let w = 290.0;
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let w = 3.0 * 92.0 + 2.0 * 8.0;
                 ui.add_space((ui.available_width() - w).max(0.0) / 2.0);
-                ui.label(RichText::new("No files at hand? Try the").color(pal.text_dim).size(12.5));
-                if ui.link(RichText::new("folder demo").size(12.5)).clicked() {
+                if ui.add_sized([92.0, 28.0], egui::Button::new("Files")).clicked() {
+                    action = WelcomeAction::DemoFiles;
+                }
+                if ui.add_sized([92.0, 28.0], egui::Button::new("Folders")).clicked() {
                     action = WelcomeAction::DemoFolders;
                 }
-                ui.label(RichText::new("or").color(pal.text_dim).size(12.5));
-                if ui.link(RichText::new("merge demo").size(12.5)).clicked() {
+                if ui.add_sized([92.0, 28.0], egui::Button::new("Merge")).clicked() {
                     action = WelcomeAction::DemoMerge;
                 }
             });
@@ -138,7 +142,9 @@ pub fn ui(
                     };
                     let text = format!("{}  ⇄  {}", name(a), name(b));
                     let r = ui
-                        .add(egui::Button::new(RichText::new(text).color(pal.text)).frame_when_inactive(false))
+                        .add(egui::Button::new(RichText::new(text).color(pal.text))
+                            .stroke(Stroke::NONE)
+                            .frame_when_inactive(false))
                         .on_hover_text(format!("{a}\n{b}"));
                     if r.clicked() {
                         action = WelcomeAction::OpenRecent(i);
@@ -219,16 +225,57 @@ fn slot_ui(
                 FontId::proportional(15.0),
                 if hot { color } else { pal.text_dim },
             );
-            let bw = 84.0;
-            let brow = Rect::from_center_size(rect.center() + vec2(0.0, 22.0), vec2(bw * 2.0 + 8.0, 28.0));
+            let bw = 160.0;
+            let brow = Rect::from_center_size(rect.center() + vec2(0.0, 22.0), vec2(bw, 28.0));
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(brow).layout(egui::Layout::left_to_right(egui::Align::Center)));
-            if child.add(egui::Button::new("File…").min_size(vec2(bw, 26.0))).clicked() {
-                action = Some(WelcomeAction::PickFile(i));
-            }
-            if child.add(egui::Button::new("Folder…").min_size(vec2(bw, 26.0))).clicked() {
-                action = Some(WelcomeAction::PickFolder(i));
+            if child.add(egui::Button::new("Choose file or folder…").min_size(vec2(bw, 26.0))).clicked() {
+                action = Some(WelcomeAction::Pick(i));
             }
         }
     }
     action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recent_rows_do_not_move_on_hover() {
+        fn collect(shape: &Shape, rows: &mut Vec<Rect>) {
+            match shape {
+                Shape::Text(text) if matches!(text.galley.text(), "a.rs  ⇄  b.rs" | "c.rs  ⇄  d.rs") => {
+                    rows.push(text.galley.rect.translate(text.pos.to_vec2()));
+                }
+                Shape::Vec(shapes) => for shape in shapes { collect(shape, rows); },
+                _ => {}
+            }
+        }
+        for dark in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
+            let recent = vec![("a.rs".into(), "b.rs".into()), ("c.rs".into(), "d.rs".into())];
+            let draw = |events| {
+                let mut output = ctx.run_ui(egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 900.0))),
+                    events,
+                    ..Default::default()
+                }, |ui| { super::ui(ui, &[None, None], &recent, false); });
+                output.textures_delta.clear();
+                let mut rows = Vec::new();
+                for shape in output.shapes { collect(&shape.shape, &mut rows); }
+                rows
+            };
+            draw(Vec::new());
+            let baseline = draw(Vec::new());
+            assert_eq!(baseline.len(), 2);
+            for row in &baseline {
+                draw(vec![egui::Event::PointerMoved(row.center())]);
+                assert_eq!(draw(Vec::new()), baseline, "Recent rows moved on hover (dark={dark})");
+                draw(vec![egui::Event::PointerGone]);
+                assert_eq!(draw(Vec::new()), baseline, "Recent rows moved after hover (dark={dark})");
+            }
+        }
+    }
 }

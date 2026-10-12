@@ -52,6 +52,8 @@ scripts/screenshots.py                            # macOS native captures → si
 - `src/folder.rs`: recursive comparison (background thread); `src/source.rs`
   `Entry` = filesystem path or in-memory `MemNode` (used by `src/demo.rs`, which
   embeds `samples/`). `IGNORED_NAMES` lists the skipped folder names.
+  Welcome offers Files, Folders, and Merge demo buttons; the file demo compares
+  the embedded TypeScript `format.ts` pair without requiring files on disk.
 - `src/highlight.rs`: language table + capture-name → `Hl` mapping. The whole
   file is highlighted, then split into per-line spans.
 - `src/ui/`: `file_view.rs`, `folder_view.rs`, `merge_view.rs`, `welcome.rs`, `code.rs`
@@ -69,6 +71,10 @@ scripts/screenshots.py                            # macOS native captures → si
   (`LOCAL REMOTE [BASE MERGED]`).
 - `site/`: landing page; `.github/workflows/release.yml`: release pipeline.
   Installation docs use GitHub Releases; Tower setup details belong in the README.
+  Website copy stays platform-neutral; macOS appears only on the download button
+  and its metadata line. Platform-specific installation steps live in the README.
+  README usage is platform-neutral (`Mod` = Command on macOS, Ctrl elsewhere);
+  distinguish published macOS bundles/integrations from unverified source ports.
   GitHub description / homepage and the README link to `https://minidiff.signalwerk.ch/`.
   Final style: Midnight, IBM Plex Mono headings / Work Sans body via
   `fonts.signalwerk.ch` (see signalwerk/fonts.cdn); no custom letter spacing or
@@ -77,7 +83,8 @@ scripts/screenshots.py                            # macOS native captures → si
   Keep captions and download metadata as readable as the footer text.
   Keep the page short, with no privacy
   page. Screenshots have task headings, use narrow native windows, stack, and extend beyond the text
-  column (1200px maximum). `scripts/screenshots.py` regenerates them and their
+  column (1200px maximum), with images directly in figures and no decorative
+  screenshot frames. `scripts/screenshots.py` regenerates them and their
   HTML dimensions using temporary bundles and isolated dark-theme profiles.
   Captures default to the internal Retina display and verify 2× pixel density;
   persisted global window positions must be multiplied by that display’s scale.
@@ -91,16 +98,25 @@ scripts/screenshots.py                            # macOS native captures → si
 - **Diff/merge bodies are custom-painted** inside `ScrollArea::show_rows` with
   fixed row height and `item_spacing.y = 0`. Horizontal scroll is our own
   `h_off`; the right-edge overview strip doubles as the scrollbar.
+  Hover fills overlay text; use `from_rgba_unmultiplied_const` for translucent
+  palette colours so an unscaled white RGB value cannot wash out the line.
 - **Windows:** closing the original window hides eframe's root viewport while
   other windows remain; closing the last window ends the process. Unsaved merge
   confirmation belongs to its window. OS opens and all window close guards run in
   `App::logic` too (background/occluded windows can skip `App::ui`). File menu /
   `⌘N` creates a new window.
+  File/folder pickers use asynchronous rfd sheets created on the main thread;
+  poll their per-window results in logic, with a repaint waker. Blocking `runModal`
+  inside the UI callback re-enters winit on focus/drag events and aborts on macOS.
+  Welcome has one Choose button per side using `pick_file_or_folder`; rfd only
+  supports the combined picker on macOS (source ports currently fall back to files).
 - **Renderer:** use wgpu for native windows. The OpenGL/glutin backend can panic
   when disposing of child windows while the root viewport is hidden on macOS.
+  Keep eframe's `links` feature enabled (defaults are disabled) so hyperlinks
+  and `OpenUrl` actions launch the user's browser.
 - **Button layout:** egui 0.36 subtracts the theme border width from padding
   before applying explicit button strokes. Keep theme border widths equal across
-  states and frameless icon strokes at zero to avoid hover shifts.
+  states and frameless icon / Recent button strokes at zero to avoid hover shifts.
 - **Glyphs:** the UI font falls back to Hack (added in `install_fonts`); on macOS SF Pro / SF Mono are
   loaded from `/System/Library/Fonts`. Before using a new symbol, verify a bundled
   font has it, or it renders as tofu.
@@ -118,6 +134,12 @@ scripts/screenshots.py                            # macOS native captures → si
   Help: Keyboard Shortcuts. Appearance and automatic-update settings live in
   Preferences (`⌘,`). No per-window File/help menu, branding, or theme button.
   Recent macOS versions automatically display Preferences as Settings in the menu.
+- **Information overlays:** About and Keyboard Shortcuts share a padded frame
+  and right-aligned Close footer. Shortcuts are grouped by task with readable key
+  badges; only the list scrolls, keeping the heading and footer visible in small windows.
+- **Folder filters:** leave space around search; use full status names on chips.
+  Group Changed / Identical separately from Only in A / Only in B, wrapping in narrow sidebars.
+  File and folder app bars have Swap on the left and Reload on the right, without comparison breadcrumbs.
 - **Updates:** MiniDiff menu has an About version modal and a manual update check.
   Automatic checks run on startup and every 24 hours (shared across windows,
   monotonic clock, logic-frame timer); respect `auto_update` and never interrupt

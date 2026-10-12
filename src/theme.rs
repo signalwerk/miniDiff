@@ -129,7 +129,7 @@ pub static DARK: Palette = Palette {
     text_dim: hex(0x8a939f),
     accent: hex(0x4c9aff),
     accent_bg: hex(0x1d3557),
-    hover: Color32::from_rgba_premultiplied(255, 255, 255, 8),
+    hover: Color32::from_rgba_unmultiplied_const(255, 255, 255, 8),
     filler: hex(0x13161b),
     fold_bg: hex(0x182029),
 
@@ -167,7 +167,7 @@ pub static LIGHT: Palette = Palette {
     text_dim: hex(0x656d76),
     accent: hex(0x0969da),
     accent_bg: hex(0xddf4ff),
-    hover: Color32::from_rgba_premultiplied(0, 0, 0, 7),
+    hover: Color32::from_rgba_unmultiplied_const(0, 0, 0, 7),
     filler: hex(0xf3f4f6),
     fold_bg: hex(0xeaf2fb),
 
