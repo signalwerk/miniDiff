@@ -13,7 +13,7 @@ use egui::{
 };
 
 use super::code::{CodeStyle, line_job, paint_filler, paint_job, paint_line_number};
-use super::{ViewSettings, icon_button, keys_free, toggle, toolbar_frame};
+use super::{ViewSettings, icon_button, keys_free, toggle, toolbar_frame, dialog_modal, dialog_footer};
 use crate::highlight::{Highlights, highlight};
 use crate::diff::{DiffOptions, diff_docs};
 use crate::merge::{ChunkKind, MergeDoc, Origin, Resolution, default_resolution};
@@ -112,6 +112,8 @@ pub struct MergeView {
     pub labels: [String; 3],
     /// Launched as a merge tool (git/Tower): offer Save & Close / Cancel.
     pub tool_mode: bool,
+    /// Built-in practice merge: changes are disposable and cannot be saved.
+    pub demo: bool,
     pub unsaved: bool,
     /// At least one successful save, and nothing changed since.
     pub saved: bool,
@@ -178,6 +180,7 @@ impl MergeView {
             output,
             labels,
             tool_mode,
+            demo: false,
             unsaved: false,
             saved: false,
             result: TextDoc::default(),
@@ -491,7 +494,12 @@ impl MergeView {
         self.editing = Some((ci, lines.join("\n")));
     }
 
+    pub fn needs_save(&self) -> bool {
+        self.unsaved && !self.demo
+    }
+
     fn request_save(&mut self, and_close: bool) {
+        if self.demo { return; }
         if self.doc.unresolved_count() > 0 {
             self.confirm_save = Some(and_close);
         } else if self.save(and_close) && and_close {
@@ -501,6 +509,7 @@ impl MergeView {
 
     /// Returns true on success.
     pub fn save(&mut self, _and_close: bool) -> bool {
+        if self.demo { return false; }
         let out = self.doc.output();
         let Some(path) = &self.output else {
             self.message = Some(("No output file to save to".into(), true));
@@ -545,11 +554,17 @@ impl MergeView {
                 } else if open == 0 {
                     ui.label(RichText::new(format!("✔ All {total} conflicts resolved")).color(pal.add_fg).strong());
                 } else {
-                    ui.label(
+                    if ui.add(egui::Label::new(
                         RichText::new(format!("⚠ {open} of {total} conflict{} unresolved", if total == 1 { "" } else { "s" }))
                             .color(pal.conflict)
                             .strong(),
-                    );
+                    ).sense(Sense::click()))
+                        .on_hover_cursor(CursorIcon::PointingHand)
+                        .on_hover_text("Go to the next unresolved conflict")
+                        .clicked()
+                    {
+                        self.advance();
+                    }
                 }
                 if total > 0 {
                     ui.separator();
@@ -562,8 +577,8 @@ impl MergeView {
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let save_label = "💾 Save";
-                    if self.tool_mode {
+                    let save_label = "Save";
+                    if self.tool_mode && !self.demo {
                         let b = egui::Button::new(RichText::new("Save & Close").color(Color32::WHITE).strong()).fill(pal.accent);
                         if ui.add(b).on_hover_text(format!("Write the result and return to git ({}S saves only)", super::cmd())).clicked() {
                             self.request_save(true);
@@ -571,13 +586,13 @@ impl MergeView {
                         if ui.button("Cancel").on_hover_text("Close without saving — the merge stays unresolved").clicked() {
                             *action = MergeAction::Cancel;
                         }
-                    } else {
+                    } else if !self.demo {
                         let b = egui::Button::new(RichText::new(save_label).color(Color32::WHITE).strong()).fill(pal.accent);
                         if ui.add(b).on_hover_text(format!("{}S", super::cmd())).clicked() {
                             self.request_save(false);
                         }
                     }
-                    ui.separator();
+                    if !self.demo { ui.separator(); }
                     toggle(ui, &mut settings.collapse, "↕ Collapse", "Collapse unchanged lines  (c)");
                     if self.doc.has_base {
                         toggle(ui, &mut settings.show_base, "Base", "Show the common ancestor");
@@ -818,8 +833,20 @@ impl MergeView {
 
         let chip = |x: f32, text: &str, selected: bool, color: Color32, tip: &str, salt: usize| -> (f32, bool) {
             let galley = p.layout_no_wrap(text.to_owned(), font.clone(), color);
-            let w = galley.size().x + 14.0;
-            let rect = Rect::from_min_size(pos2(x, r.top() + 2.0), vec2(w, r.height() - 4.0));
+            let labels = match salt {
+                1 => Some(["Use A  ▶", "✔ Included A"]),
+                2 => Some(["◀  Use B", "✔ Included B"]),
+                3 => Some(["Use base", "✔ Included base"]),
+                _ => None,
+            };
+            // Reserve both label widths and the same inset in either state.
+            let width = labels.map_or(galley.size().x, |labels| labels.into_iter()
+                .map(|label| p.layout_no_wrap(label.into(), font.clone(), color).size().x)
+                .fold(0.0, f32::max));
+            let w = width + 14.0;
+            // The selected outline occupies the first two points of the row.
+            let top = if labels.is_some() { 4.0 } else { 2.0 };
+            let rect = Rect::from_min_size(pos2(x, r.top() + top), vec2(w, r.height() - top - 2.0));
             let resp = ui
                 .interact(rect, ui.id().with(("chip", self.id, ci, salt)), Sense::click())
                 .on_hover_cursor(CursorIcon::PointingHand)
@@ -1084,38 +1111,51 @@ impl MergeView {
         }
 
         if let Some(and_close) = self.confirm_save {
-            let mut decision = None;
             let open = self.doc.unresolved_count();
-            let modal = egui::Modal::new(egui::Id::new(("confirm-save", self.id))).show(&ctx, |ui| {
-                ui.set_width(380.0);
-                ui.heading("Unresolved conflicts");
-                ui.label(format!(
-                    "{open} conflict{} still unresolved. They will be written with conflict markers.",
-                    if open == 1 { " is" } else { "s are" }
-                ));
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Save anyway").clicked() {
-                        decision = Some(true);
-                    }
-                    if ui.button(RichText::new("Keep resolving").strong()).clicked() {
-                        decision = Some(false);
-                    }
-                });
+            let error = self.message.as_ref().filter(|(_, error)| *error).map(|(text, _)| text.as_str());
+            let modal = dialog_modal(&ctx, egui::Id::new(("confirm-save", self.id))).show(&ctx, |ui| {
+                unresolved_conflicts_contents(ui, &self.file_name, open, error)
             });
+            let mut decision = modal.inner;
             if modal.should_close() {
                 decision = Some(false);
             }
             if let Some(d) = decision {
-                self.confirm_save = None;
-                if d && self.save(and_close) && and_close {
-                    *action = MergeAction::SavedAndClose;
+                if !d {
+                    self.confirm_save = None;
+                } else if self.save(and_close) {
+                    self.confirm_save = None;
+                    if and_close { *action = MergeAction::SavedAndClose; }
                 }
             }
         } else if std::mem::take(&mut self.close_flag) {
             *action = MergeAction::SavedAndClose;
         }
     }
+}
+
+fn unresolved_conflicts_contents(ui: &mut Ui, file_name: &str, open: usize, error: Option<&str>) -> Option<bool> {
+    let pal = crate::theme::palette(ui.ctx());
+    ui.set_width(380.0_f32.min(ui.ctx().content_rect().width() - 80.0));
+    ui.label(RichText::new("Unresolved conflicts").size(22.0).strong());
+    ui.add_space(12.0);
+    ui.add(egui::Label::new(RichText::new(file_name).size(14.0).strong()).truncate()).on_hover_text(file_name);
+    ui.add_space(4.0);
+    ui.label(RichText::new(format!("{open} conflict{} still unresolved.", if open == 1 { " is" } else { "s are" }))
+        .size(13.0).color(pal.conflict));
+    ui.add_space(4.0);
+    ui.label(RichText::new("Saving now writes conflict markers into the result. Keep resolving to finish the merge first.")
+        .size(13.0).color(pal.text_dim));
+    if let Some(error) = error {
+        ui.add_space(12.0);
+        ui.add(egui::Label::new(RichText::new(error).size(13.0).color(pal.del_fg)).truncate()).on_hover_text(error);
+    }
+    dialog_footer(ui, |ui| {
+        let keep = egui::Button::new(RichText::new("Keep resolving").strong().color(Color32::WHITE)).fill(pal.accent);
+        if ui.add_sized([120.0, 28.0], keep).clicked() { return Some(false); }
+        if ui.add_sized([110.0, 28.0], egui::Button::new("Save anyway")).clicked() { return Some(true); }
+        None
+    })
 }
 
 fn describe(r: &Resolution) -> &'static str {
@@ -1134,6 +1174,144 @@ fn describe(r: &Resolution) -> &'static str {
 mod tests {
     use super::*;
     use crate::merge::Chunk;
+
+    #[test]
+    fn clicking_unresolved_count_skips_resolved_changes_and_wraps() {
+        fn center(shape: &egui::epaint::Shape) -> Option<egui::Pos2> {
+            match shape {
+                egui::epaint::Shape::Text(t) if t.galley.text().contains("2 of 3 conflicts unresolved") => Some(t.pos + t.galley.size() * 0.5),
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().find_map(center),
+                _ => None,
+            }
+        }
+        let mut doc = view(Resolution::Unresolved).doc;
+        let mut resolved = doc.chunks[0].clone();
+        resolved.resolution = Resolution::Remote;
+        doc.chunks.push(resolved);
+        doc.chunks.push(doc.chunks[0].clone());
+        let mut view = MergeView::new(doc, "merged.rs".into(), None,
+            ["Local".into(), "Base".into(), "Remote".into()], false);
+        let ctx = egui::Context::default();
+        let pal = crate::theme::palette(&ctx);
+        let mut settings = ViewSettings::default();
+        let mut action = MergeAction::None;
+        let mut pos = None;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| view.toolbar(ui, &mut settings, pal, &mut action));
+            pos = output.shapes.iter().find_map(|s| center(&s.shape));
+            output.textures_delta.clear();
+        }
+        let pos = pos.expect("unresolved conflict count");
+        for expected in [3, 0] {
+            view.scroll_to = None;
+            for pressed in [true, false] {
+                let mut output = ctx.run_ui(egui::RawInput {
+                    events: vec![egui::Event::PointerMoved(pos), egui::Event::PointerButton {
+                        pos, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE,
+                    }], ..Default::default()
+                }, |ui| view.toolbar(ui, &mut settings, pal, &mut action));
+                output.textures_delta.clear();
+            }
+            assert_eq!(view.current, Some(expected));
+            assert_eq!(view.scroll_to, Some(expected));
+            assert_eq!(view.doc.unresolved_count(), 2);
+            assert!(!view.unsaved);
+        }
+    }
+
+    #[test]
+    fn unresolved_warning_fits_small_windows_in_both_themes() {
+        for dark in [false, true] {
+            for size in [vec2(640.0, 400.0), vec2(880.0, 520.0)] {
+                let ctx = egui::Context::default();
+                crate::theme::install(&ctx);
+                ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
+                let screen = Rect::from_min_size(egui::Pos2::ZERO, size);
+                let mut bounds = Rect::NOTHING;
+                for _ in 0..4 {
+                    let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+                        bounds = dialog_modal(ui.ctx(), egui::Id::new("warning-fit")).show(ui.ctx(), |ui| {
+                            unresolved_conflicts_contents(ui, "merged.rs", 3, Some("No output file to save to"));
+                        }).response.rect;
+                    });
+                    output.textures_delta.clear();
+                }
+                assert!(screen.shrink(12.0).contains_rect(bounds));
+            }
+        }
+    }
+
+    #[test]
+    fn unresolved_warning_keeps_failed_saves_open_and_cancels_safely() {
+        fn center(shape: &egui::epaint::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::epaint::Shape::Text(t) if t.galley.text() == label => Some(t.pos + t.galley.size() * 0.5),
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().find_map(|s| center(s, label)),
+                _ => None,
+            }
+        }
+        for label in ["Keep resolving", "Save anyway"] {
+            let ctx = egui::Context::default();
+            let mut view = view(Resolution::Unresolved);
+            view.output = None;
+            view.unsaved = true;
+            view.confirm_save = Some(true);
+            let mut action = MergeAction::None;
+            let mut position = None;
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| view.modals(ui, &mut action));
+                position = output.shapes.iter().find_map(|s| center(&s.shape, label));
+                output.textures_delta.clear();
+            }
+            let pos = position.expect("confirmation action");
+            for pressed in [true, false] {
+                let mut output = ctx.run_ui(egui::RawInput {
+                    events: vec![egui::Event::PointerMoved(pos), egui::Event::PointerButton {
+                        pos, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE,
+                    }], ..Default::default()
+                }, |ui| view.modals(ui, &mut action));
+                output.textures_delta.clear();
+            }
+            assert_eq!(action, MergeAction::None);
+            assert!(view.unsaved);
+            if label == "Keep resolving" {
+                assert!(view.confirm_save.is_none() && view.message.is_none());
+            } else {
+                assert_eq!(view.confirm_save, Some(true));
+                assert!(view.message.as_ref().is_some_and(|(_, error)| *error));
+            }
+        }
+    }
+
+    #[test]
+    fn merge_demo_has_no_save_controls_or_keyboard_save_prompt() {
+        fn texts(shape: &egui::epaint::Shape, labels: &mut Vec<String>) {
+            match shape {
+                egui::epaint::Shape::Text(t) => labels.push(t.galley.text().to_owned()),
+                egui::epaint::Shape::Vec(shapes) => for s in shapes { texts(s, labels); },
+                _ => {}
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut view = view(Resolution::Unresolved);
+        view.demo = true;
+        let mut settings = ViewSettings::default();
+        let mut labels = Vec::new();
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1100.0, 700.0))),
+                events: vec![egui::Event::Key { key: Key::S, physical_key: None, pressed: true,
+                    repeat: false, modifiers: Modifiers::COMMAND }],
+                ..Default::default()
+            }, |ui| { view.ui(ui, &mut settings); });
+            labels.clear();
+            for s in &output.shapes { texts(&s.shape, &mut labels); }
+            output.textures_delta.clear();
+        }
+        assert!(!labels.iter().any(|s| s == "Save" || s == "Save & Close" || s == "Save anyway"));
+        assert!(view.confirm_save.is_none());
+        assert!(view.message.is_none());
+    }
 
     #[test]
     fn chosen_inputs_match_each_resolution() {

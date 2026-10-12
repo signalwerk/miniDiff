@@ -20,7 +20,7 @@ use crate::ui::file_view::FileView;
 use crate::ui::folder_view::FolderView;
 use crate::ui::merge_view::{MergeAction, MergeView};
 use crate::ui::welcome::{self, WelcomeAction};
-use crate::ui::{ViewSettings, cmd, keys_free};
+use crate::ui::{ViewSettings, cmd, keys_free, dialog_footer};
 
 /// What to show on startup (from the command line).
 pub enum Launch {
@@ -588,6 +588,7 @@ impl WindowUi<'_> {
             self.open_merge(Some(base), local, remote, None, Some(labels), false);
             if let Screen::Merge(m) = &mut self.window.screen {
                 m.file_name = "merged.rs".into();
+                m.demo = true;
             }
         } else {
             let (a, b) = crate::demo::folders();
@@ -597,7 +598,7 @@ impl WindowUi<'_> {
 
     fn go_home(&mut self) {
         if let Screen::Merge(m) = &self.window.screen
-            && m.unsaved
+            && m.needs_save()
         {
             self.window.close_after_merge = false;
             self.window.close_dialog = true;
@@ -837,29 +838,19 @@ impl WindowUi<'_> {
         if !self.window.close_dialog {
             return;
         }
-        let mut choice = None;
-        let modal = egui::Modal::new(Id::new("unsaved-merge")).show(ctx, |ui| {
-            ui.set_width(380.0);
-            ui.heading("Unsaved merge");
-            ui.label("The merge result has changes that were not saved.");
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if ui.button(RichText::new("Save").strong()).clicked() {
-                    choice = Some(0);
-                }
-                if ui.button("Discard").clicked() {
-                    choice = Some(1);
-                }
-                if ui.button("Cancel").clicked() {
-                    choice = Some(2);
-                }
-            });
+        let (file_name, error) = match &self.window.screen {
+            Screen::Merge(m) => (m.file_name.as_str(), m.message.as_ref().filter(|(_, error)| *error).map(|(text, _)| text.as_str())),
+            _ => ("Merge result", None),
+        };
+        let modal = information_modal(ctx, "unsaved-merge").show(ctx, |ui| {
+            unsaved_merge_contents(ui, file_name, error)
         });
+        let mut choice = modal.inner;
         if modal.should_close() {
-            choice = Some(2);
+            choice = Some(MergeCloseChoice::Cancel);
         }
         match choice {
-            Some(0) => {
+            Some(MergeCloseChoice::Save) => {
                 if let Screen::Merge(m) = &mut self.window.screen
                     && m.save(true)
                 {
@@ -867,7 +858,7 @@ impl WindowUi<'_> {
                     self.finish_merge(ctx);
                 }
             }
-            Some(1) => {
+            Some(MergeCloseChoice::Discard) => {
                 self.window.close_dialog = false;
                 if let Screen::Merge(m) = &mut self.window.screen {
                     m.unsaved = false;
@@ -884,7 +875,7 @@ impl WindowUi<'_> {
     }
 
     fn request_close(&mut self) {
-        if matches!(&self.window.screen, Screen::Merge(m) if m.unsaved) {
+        if matches!(&self.window.screen, Screen::Merge(m) if m.needs_save()) {
             self.window.close_after_merge = true;
             self.window.close_dialog = true;
         } else {
@@ -916,7 +907,7 @@ impl WindowUi<'_> {
             Screen::Welcome => "MiniDiff".into(),
             Screen::File(fv) => format!("{} ⇄ {} — MiniDiff", short(&fv.left_label), short(&fv.right_label)),
             Screen::Folder(f) => format!("{} — MiniDiff", f.title()),
-            Screen::Merge(m) => format!("{}Merge {} — MiniDiff", if m.unsaved { "● " } else { "" }, m.file_name),
+            Screen::Merge(m) => format!("{}Merge {} — MiniDiff", if m.needs_save() { "● " } else { "" }, m.file_name),
         }
     }
 }
@@ -977,26 +968,42 @@ impl WindowUi<'_> {
 }
 
 fn information_modal(ctx: &egui::Context, id: &str) -> egui::Modal {
-    let pal = theme::palette(ctx);
-    egui::Modal::new(Id::new(id)).frame(
-        egui::Frame::popup(&ctx.global_style())
-            .fill(pal.panel)
-            .stroke(Stroke::new(1.0, pal.border))
-            .corner_radius(12)
-            .inner_margin(Margin::same(24)),
-    )
+    crate::ui::dialog_modal(ctx, Id::new(id))
 }
 
 fn information_footer(ui: &mut Ui) -> bool {
-    ui.add_space(16.0);
-    ui.separator();
-    ui.add_space(8.0);
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    dialog_footer(ui, |ui| {
         ui.add_sized([76.0, 28.0], egui::Button::new("Close")).clicked()
-    }).inner
+    })
 }
 
-fn preferences_contents(ui: &mut Ui, settings: &mut Settings) {
+#[derive(Clone, Copy)]
+enum MergeCloseChoice { Save, Discard, Cancel }
+
+fn unsaved_merge_contents(ui: &mut Ui, file_name: &str, error: Option<&str>) -> Option<MergeCloseChoice> {
+    let pal = theme::palette(ui.ctx());
+    ui.set_width(380.0_f32.min(ui.ctx().content_rect().width() - 80.0));
+    ui.label(RichText::new("Unsaved merge").size(22.0).strong());
+    ui.add_space(12.0);
+    ui.add(egui::Label::new(RichText::new(file_name).size(14.0).strong()).truncate()).on_hover_text(file_name);
+    ui.add_space(4.0);
+    ui.label(RichText::new("Save your changes before continuing. Discarding loses your unsaved merge changes.").size(13.0).color(pal.text_dim));
+    if let Some(error) = error {
+        ui.add_space(12.0);
+        ui.add(egui::Label::new(RichText::new(error).size(13.0).color(pal.del_fg)).truncate()).on_hover_text(error);
+    }
+    dialog_footer(ui, |ui| {
+        let mut choice = None;
+        let save = egui::Button::new(RichText::new("Save").strong().color(egui::Color32::WHITE)).fill(pal.accent);
+        if ui.add_sized([76.0, 28.0], save).clicked() { choice = Some(MergeCloseChoice::Save); }
+        if ui.add_sized([76.0, 28.0], egui::Button::new("Cancel")).clicked() { choice = Some(MergeCloseChoice::Cancel); }
+        if ui.add_sized([76.0, 28.0], egui::Button::new(RichText::new("Discard").color(pal.del_fg))).clicked() { choice = Some(MergeCloseChoice::Discard); }
+        choice
+    })
+}
+
+fn preferences_contents(ui: &mut Ui, settings: &mut Settings, update: &crate::update::State) -> bool {
+    use crate::update::State;
     let pal = theme::palette(ui.ctx());
     ui.set_width(360.0_f32.min(ui.ctx().content_rect().width() - 80.0));
     ui.label(RichText::new("Preferences").size(22.0).strong());
@@ -1016,6 +1023,19 @@ fn preferences_contents(ui: &mut Ui, settings: &mut Settings) {
     ui.checkbox(&mut settings.auto_update, "Check for updates automatically");
     ui.add_space(4.0);
     ui.label(RichText::new("On startup and every 24 hours while MiniDiff is open.").size(13.0).color(pal.text_dim));
+    ui.add_space(12.0);
+    let busy = matches!(update, State::Checking | State::Installing(_) | State::Installed(_));
+    let clicked = ui.add_enabled(!busy, egui::Button::new("Check for Updates").min_size(vec2(0.0, 28.0))).clicked();
+    match update {
+        State::Checking => { ui.horizontal(|ui| { ui.spinner(); ui.label("Checking for updates…"); }); }
+        State::UpToDate => { ui.label(RichText::new("MiniDiff is up to date.").size(13.0).color(pal.add_fg)); }
+        State::Available(m) => { ui.label(RichText::new(format!("MiniDiff {} is available.", m.version)).size(13.0).color(pal.add_fg)); }
+        State::Failed(error) => { ui.label(RichText::new("Could not check for updates.").size(13.0).color(pal.del_fg)).on_hover_text(error); }
+        State::Installing(_) => { ui.label("Installing update…"); }
+        State::Installed(_) => { ui.label("Restart to finish the update."); }
+        State::Idle => {}
+    }
+    clicked
 }
 
 fn shortcut_section(ui: &mut Ui, title: &str, rows: &[(&str, String)]) {
@@ -1194,7 +1214,10 @@ impl WindowUi<'_> {
         self.close_dialog_ui(&ctx);
         if self.window.preferences_open {
             let response = information_modal(&ctx, "preferences").show(&ctx, |ui| {
-                preferences_contents(ui, self.settings);
+                if preferences_contents(ui, self.settings, &self.updater.state()) {
+                    *self.manual_check = true;
+                    self.updater.check(&ctx);
+                }
                 information_footer(ui)
             });
             if response.inner || response.should_close() { self.window.preferences_open = false; }
@@ -1270,7 +1293,7 @@ impl AppState {
                 .root
                 .iter()
                 .chain(self.windows.iter())
-                .any(|w| matches!(&w.screen, Screen::Merge(m) if m.unsaved));
+                .any(|w| matches!(&w.screen, Screen::Merge(m) if m.needs_save()));
             if unsaved {
                 if let Some(window) = self.root.iter_mut().chain(self.windows.iter_mut()).next() {
                     window.toast = Some((
@@ -1547,12 +1570,38 @@ mod tests {
     }
 
     #[test]
+    fn edited_merge_demo_closes_and_goes_home_without_saving() {
+        let ctx = egui::Context::default();
+        for home in [false, true] {
+            let mut app = app();
+            root_ui(&mut app).open_demo(true);
+            if let Screen::Merge(m) = &mut app.root.as_mut().unwrap().screen {
+                assert!(m.demo);
+                m.unsaved = true;
+                assert!(!m.needs_save());
+                assert!(!m.save(false));
+                assert!(m.message.is_none());
+            }
+            let mut view = root_ui(&mut app);
+            if home { view.go_home(); } else { view.request_close(); }
+            assert!(!view.window.close_dialog);
+            assert!(if home { matches!(view.window.screen, Screen::Welcome) } else { view.window.closed });
+        }
+        let mut app = app();
+        root_ui(&mut app).open_demo(true);
+        if let Screen::Merge(m) = &mut app.root.as_mut().unwrap().screen { m.unsaved = true; }
+        app.menu_action(platform::MenuAction::Quit, &ctx);
+        assert!(app.root.as_ref().unwrap().closed);
+        assert!(!app.root.as_ref().unwrap().close_dialog);
+    }
+
+    #[test]
     fn native_quit_protects_unsaved_merge_and_replaces_preferences_with_confirmation() {
         let ctx = egui::Context::default();
         let mut app = app();
         root_ui(&mut app).open_demo(true);
         if let Screen::Merge(merge) = &mut app.root.as_mut().unwrap().screen {
-            merge.unsaved = true;
+            merge.demo = false; merge.unsaved = true;
         }
         app.root.as_mut().unwrap().preferences_open = true;
         app.route_incoming(Incoming { entries: Vec::new(), slot: None }, &ctx);
@@ -1592,7 +1641,7 @@ mod tests {
     fn information_overlays_fit_small_windows_in_both_themes() {
         for dark in [false, true] {
             for size in [vec2(640.0, 400.0), vec2(880.0, 620.0)] {
-                for overlay in ["about", "shortcuts", "preferences"] {
+                for overlay in ["about", "shortcuts", "preferences", "preferences-checking", "unsaved"] {
                     let ctx = egui::Context::default();
                     install_fonts(&ctx);
                     theme::install(&ctx);
@@ -1607,10 +1656,12 @@ mod tests {
                             bounds = information_modal(ui.ctx(), "fit-test").show(ui.ctx(), |ui| {
                                 match overlay {
                                     "shortcuts" => help_shortcuts(ui),
-                                    "preferences" => preferences_contents(ui, &mut Settings::default()),
+                                    "preferences" => { preferences_contents(ui, &mut Settings::default(), &crate::update::State::Idle); }
+                                    "preferences-checking" => { preferences_contents(ui, &mut Settings::default(), &crate::update::State::Checking); }
+                                    "unsaved" => { unsaved_merge_contents(ui, "merged.rs", Some("No output file to save to")); }
                                     _ => about_contents(ui),
                                 }
-                                information_footer(ui);
+                                if overlay != "unsaved" { information_footer(ui); }
                             }).response.rect;
                         });
                         output.textures_delta.clear();
@@ -1618,6 +1669,51 @@ mod tests {
                     assert!(screen.shrink(12.0).contains_rect(bounds),
                         "overlay does not fit: dark={dark}, overlay={overlay}, size={size:?}, bounds={bounds:?}");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn unsaved_warning_buttons_preserve_their_close_guards() {
+        fn button_center(shape: &egui::epaint::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos + text.galley.size() * 0.5),
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().find_map(|s| button_center(s, label)),
+                _ => None,
+            }
+        }
+        for label in ["Save", "Cancel", "Discard"] {
+            let ctx = egui::Context::default();
+            theme::install(&ctx);
+            let mut app = app();
+            root_ui(&mut app).open_demo(true);
+            if let Screen::Merge(m) = &mut app.root.as_mut().unwrap().screen { m.demo = false; m.unsaved = true; }
+            root_ui(&mut app).request_close();
+            let mut center = None;
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| root_ui(&mut app).close_dialog_ui(ui.ctx()));
+                center = output.shapes.iter().find_map(|s| button_center(&s.shape, label));
+                output.textures_delta.clear();
+            }
+            let center = center.expect("warning action button");
+            for pressed in [true, false] {
+                let mut output = ctx.run_ui(egui::RawInput {
+                    events: vec![egui::Event::PointerMoved(center), egui::Event::PointerButton {
+                        pos: center, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE,
+                    }], ..Default::default()
+                }, |ui| root_ui(&mut app).close_dialog_ui(ui.ctx()));
+                output.textures_delta.clear();
+            }
+            let window = app.root.as_ref().unwrap();
+            let Screen::Merge(m) = &window.screen else { panic!("merge was replaced") };
+            match label {
+                "Save" => {
+                    // The demo has no output path: failed saves must keep the warning open.
+                    assert!(window.close_dialog && m.unsaved && !window.closed);
+                    assert!(m.message.as_ref().is_some_and(|(_, error)| *error));
+                }
+                "Cancel" => assert!(!window.close_dialog && window.close_cancelled && m.unsaved && !window.closed),
+                _ => assert!(!window.close_dialog && !m.unsaved && window.closed),
             }
         }
     }
@@ -1760,7 +1856,7 @@ mod tests {
         let mut app = app();
         app.exit_when_windowless = false;
         root_ui(&mut app).open_demo(true);
-        if let Screen::Merge(m) = &mut app.root.as_mut().unwrap().screen { m.unsaved = true; }
+        if let Screen::Merge(m) = &mut app.root.as_mut().unwrap().screen { m.demo = false; m.unsaved = true; }
         app.menu_action(platform::MenuAction::Quit, &ctx);
         assert!(app.quit_requested && app.root.as_ref().unwrap().close_dialog);
         app.root.as_mut().unwrap().close_cancelled = true;
@@ -1807,7 +1903,7 @@ mod tests {
         let mut view = root_ui(&mut app);
         view.open_demo(true);
         if let Screen::Merge(m) = &mut view.window.screen {
-            m.unsaved = true;
+            m.demo = false; m.unsaved = true;
         }
         view.open_incoming(folders());
         view.request_close();
@@ -1849,7 +1945,7 @@ mod tests {
         root_ui(&mut app).open_demo(true);
         std::mem::swap(&mut app.root.as_mut().unwrap().screen, &mut app.windows[0].screen);
         if let Screen::Merge(m) = &mut app.windows[0].screen {
-            m.unsaved = true;
+            m.demo = false; m.unsaved = true;
         }
         let id = app.windows[0].id;
         let mut input = egui::RawInput::default();

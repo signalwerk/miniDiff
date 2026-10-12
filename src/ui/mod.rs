@@ -11,6 +11,24 @@ use egui::{Color32, CornerRadius, Margin, Response, RichText, Stroke, Ui};
 use crate::diff::DiffOptions;
 use crate::theme::Palette;
 
+pub fn dialog_modal(ctx: &egui::Context, id: egui::Id) -> egui::Modal {
+    let pal = crate::theme::palette(ctx);
+    egui::Modal::new(id).frame(
+        egui::Frame::popup(&ctx.global_style())
+            .fill(pal.panel)
+            .stroke(Stroke::new(1.0, pal.border))
+            .corner_radius(12)
+            .inner_margin(Margin::same(24)),
+    )
+}
+
+pub fn dialog_footer<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.add_space(16.0);
+    ui.separator();
+    ui.add_space(8.0);
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), contents).inner
+}
+
 /// Persisted view preferences shared by all diff views.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]

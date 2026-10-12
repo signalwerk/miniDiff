@@ -57,6 +57,8 @@ scripts/screenshots.py                            # macOS native captures → si
   That pair includes an indentation-only change in `formatId` and a long shared
   helper block so Whitespace and Collapse have visible effects in Files/Folders demos.
   Embedded demos must never enter Recent; only filesystem comparisons are recorded.
+  Merge demos are explicitly marked disposable: no Save button/shortcut or unsaved
+  guard on close, Home, Quit, or updater restart. Real merges retain their save guards.
 - `src/highlight.rs`: language table + capture-name → `Hl` mapping. The whole
   file is highlighted, then split into per-line spans.
 - `src/ui/`: `file_view.rs`, `folder_view.rs`, `merge_view.rs`, `welcome.rs`, `code.rs`
@@ -146,6 +148,14 @@ scripts/screenshots.py                            # macOS native captures → si
   badges; only the list scrolls, keeping the heading and footer visible in small windows.
   Its scrollbar appears only when the list overflows the available height.
   Preferences uses separate Appearance/Updates sections and the shared segmented control.
+  Its Check for Updates button uses the manual updater, reports status in the dialog,
+  and stays disabled while checking/installing or awaiting restart.
+  The unsaved-merge warning shares that frame/footer, identifies the file, and places
+  primary Save on the right of Cancel/Discard. Save failures remain visible in the warning.
+  Unresolved-conflict confirmation shares `ui::dialog_modal`/`dialog_footer`, identifies
+  the output file, explains conflict-marker output, and makes Keep resolving primary.
+  Failed Save anyway attempts leave the warning open with the error visible.
+  Merge Save buttons use plain text without a save icon.
 - **Folder filters:** leave space around search; use full status names on chips.
   Normal clicks toggle one status; Mod-click enables only that status (Changed includes errors).
   Group Changed / Identical separately from Only in A / Only in B, wrapping in narrow sidebars.
@@ -156,6 +166,9 @@ scripts/screenshots.py                            # macOS native captures → si
   merges or A/B without Base. Cached ranges follow source lines into the result and swap with inputs.
   Merge uses a gentle spotlight and step counter for the current change. Included inputs
   have labeled controls and full-chunk outlines (both for A+B/B+A, Base when selected).
+  Clicking the unresolved-conflict count jumps to the next unresolved conflict, wrapping to the first.
+  Side chips reserve both Use/Included label widths and keep a fixed inset from the outline,
+  so selection does not resize or move them.
   Don't stack unused-input dimming with the spotlight on unfocused chunks.
 - **Updates:** MiniDiff menu has an About version modal and a manual update check.
   Automatic checks run on startup and every 24 hours (shared across windows,
