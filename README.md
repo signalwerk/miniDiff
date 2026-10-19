@@ -14,7 +14,7 @@ A native diff and merge tool for **text files and folders**, built in Rust with
 - **File diff**: side-by-side or unified view.
   - Tree-sitter syntax highlighting for Rust, JS/TS/TSX, Python, Go, C/C++, Java, Ruby, HTML, CSS, JSON, TOML, YAML, Markdown and shell.
   - Word-level change emphasis.
-  - Collapsible unchanged regions and an "ignore whitespace" option.
+  - Optional line wrapping (off by default), collapsible unchanged regions and an "ignore whitespace" option.
   - A change-overview strip that also works as the scrollbar.
 - **Folder diff**: a tree of changed, added, removed and identical files, with filters and search. Select a file to see its diff; step between changed files with `Mod+↓` / `Mod+↑` (see [Keyboard](#keyboard)).
   Click a **Show files** tag to toggle its status, or `Mod+click` to show only that status.
@@ -148,6 +148,7 @@ Option (`⌥`) on macOS and Alt elsewhere.
 | Next / previous change | `n` `p` (or `Alt+↓` `Alt+↑`, `j` `k`) |
 | Next / previous file (folder view) | `Mod+↓` `Mod+↑` |
 | Side by side ⇄ unified / collapse / ignore whitespace | `u` / `c` / `w` |
+| Wrap long lines in file comparisons | `t` |
 | Font size | `+` `−` |
 | Toggle file list | `b` |
 | Merge: take A / B / A+B / B+A / base | `a` `b` / `3` `4` / `0` |

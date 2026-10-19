@@ -1149,6 +1149,7 @@ fn help_shortcuts(ui: &mut Ui) {
                 ("Side by side / unified", "u".into()),
                 ("Collapse unchanged lines", "c".into()),
                 ("Ignore whitespace", "w".into()),
+                ("Wrap long lines (file comparisons)", "t".into()),
                 ("Increase / decrease font size", "+ / −".into()),
                 ("Toggle file list", "b".into()),
                 ("Swap sides", format!("{c}⇧S")),

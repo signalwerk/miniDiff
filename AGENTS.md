@@ -101,8 +101,11 @@ scripts/screenshots.py                            # macOS native captures → si
   `ctx.fonts_mut`, `ui.close()`, `ctx.global_style()`. Check the registry source
   when unsure.
 - **Diff/merge bodies are custom-painted** inside `ScrollArea::show_rows` with
-  fixed row height and `item_spacing.y = 0`. Horizontal scroll is our own
-  `h_off`; the right-edge overview strip doubles as the scrollbar.
+  fixed row height and `item_spacing.y = 0`.
+  File comparisons offer persisted Wrap (off by default, `t`) in both layouts,
+  including folder selections. Cached visual-row offsets keep wrapped pairs aligned
+  and drive virtual scrolling, hunk navigation, hit testing, and overview markers.
+  Horizontal scroll is our own `h_off`; the right-edge overview strip doubles as the scrollbar.
   Hover fills overlay text; use `from_rgba_unmultiplied_const` for translucent
   palette colours so an unscaled white RGB value cannot wash out the line.
 - **Windows:** closing the original window hides eframe's root viewport while

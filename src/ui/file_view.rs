@@ -73,6 +73,9 @@ pub struct FileView {
     error: Option<String>,
 
     items: Vec<Item>,
+    visual_offsets: Vec<usize>,
+    layout_key: Option<(f32, f32, bool)>,
+    wrap_width: Option<f32>,
     markers: Vec<(usize, usize, Mark)>,
     built_for: Option<(bool, bool, usize)>,
     expanded: HashSet<usize>,
@@ -133,6 +136,9 @@ impl FileView {
             lang,
             opts,
             items: Vec::new(),
+            visual_offsets: vec![0],
+            layout_key: None,
+            wrap_width: None,
             markers: Vec::new(),
             built_for: None,
             expanded: HashSet::new(),
@@ -241,6 +247,7 @@ impl FileView {
                 }
             }
         }
+        self.layout_key = None;
         self.items = items;
         self.markers = markers;
     }
@@ -316,13 +323,13 @@ impl FileView {
             return action;
         }
         self.headers(ui, &st, settings.unified);
-        self.body(ui, &st, settings.unified);
+        self.body(ui, &st, settings.unified, settings.wrap);
         action
     }
 
     fn handle_keys(&mut self, ui: &mut Ui, s: &mut ViewSettings, folder_nav: bool, row_h: f32) -> FileAction {
         let mut action = FileAction::None;
-        let (next, prev, uni, col, ws) = ui.input_mut(|i| {
+        let (next, prev, uni, col, ws, wrap) = ui.input_mut(|i| {
             (
                 i.consume_key(Modifiers::NONE, Key::N)
                     || i.consume_key(Modifiers::ALT, Key::ArrowDown)
@@ -333,6 +340,7 @@ impl FileView {
                 i.consume_key(Modifiers::NONE, Key::U),
                 i.consume_key(Modifiers::NONE, Key::C),
                 i.consume_key(Modifiers::NONE, Key::W),
+                i.consume_key(Modifiers::NONE, Key::T),
             )
         });
         if next && !self.next_hunk() && folder_nav {
@@ -346,6 +354,9 @@ impl FileView {
         }
         if col {
             s.collapse = !s.collapse;
+        }
+        if wrap {
+            s.wrap = !s.wrap;
         }
         if ws {
             s.diff.ignore_whitespace = !s.diff.ignore_whitespace;
@@ -443,6 +454,7 @@ impl FileView {
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     toggle(ui, &mut s.diff.ignore_whitespace, "Whitespace", "Ignore whitespace changes  (w)");
+                    toggle(ui, &mut s.wrap, "Wrap", "Wrap long lines  (t)");
                     toggle(ui, &mut s.collapse, "↕ Collapse", "Collapse unchanged lines  (c)");
                     segmented(
                         ui,
@@ -518,7 +530,64 @@ impl FileView {
         });
     }
 
-    fn body(&mut self, ui: &mut Ui, st: &CodeStyle, unified: bool) {
+    // Cache visual row counts; scrolling still paints only the visible logical lines.
+    fn layout_rows(&mut self, ui: &Ui, st: &CodeStyle, width: f32, unified: bool, wrap: bool) {
+        let key = (width, st.font.size, wrap);
+        if self.layout_key == Some(key) {
+            return;
+        }
+        self.layout_key = Some(key);
+        let gw = st.gutter_width(self.left.len().max(self.right.len()));
+        let text_w = if unified {
+            width - 2.0 * gw - st.char_w - 18.0
+        } else {
+            width / 2.0 - gw - 8.0
+        }.max(st.char_w);
+        self.wrap_width = wrap.then_some(text_w);
+        self.visual_offsets.clear();
+        self.visual_offsets.push(0);
+        for &item in &self.items {
+            let mut count = 1;
+            if wrap && !matches!(item, Item::Fold { .. }) {
+                let row = &self.diff.rows[item.row()];
+                for (line, doc, hl, emph, included) in [
+                    (row.left, &self.left, &self.left_hl, &row.left_emph, !unified || matches!(item, Item::Left(_))),
+                    (row.right, &self.right, &self.right_hl, &row.right_emph, !matches!(item, Item::Left(_))),
+                ] {
+                    if included && let Some(line) = line {
+                        let job = self.wrap_job(line_job(doc.line(line), hl.line(line), emph, st.pal.del_emph, st), st);
+                        count = count.max(ui.painter().layout_job(job).rows.len());
+                    }
+                }
+            }
+            self.visual_offsets.push(self.visual_offsets.last().unwrap() + count);
+        }
+        if wrap {
+            self.h_off = 0.0;
+            self.h_max = 0.0;
+        }
+    }
+
+    fn wrap_job(&self, mut job: egui::text::LayoutJob, st: &CodeStyle) -> egui::text::LayoutJob {
+        if let Some(width) = self.wrap_width {
+            job.wrap.max_width = width;
+            for section in &mut job.sections {
+                section.format.line_height = Some(st.row_h);
+            }
+        }
+        job
+    }
+
+    fn paint_text(&self, p: &egui::Painter, rect: Rect, job: egui::text::LayoutJob, st: &CodeStyle) {
+        if self.wrap_width.is_some() {
+            let galley = p.layout_job(self.wrap_job(job, st));
+            p.with_clip_rect(rect.intersect(p.clip_rect())).galley(rect.min, galley, st.pal.text);
+        } else {
+            paint_job(p, rect, job, self.h_off, st);
+        }
+    }
+
+    fn body(&mut self, ui: &mut Ui, st: &CodeStyle, unified: bool, wrap: bool) {
         let pal = st.pal;
         let full = ui.available_rect_before_wrap();
         let strip_w = 12.0;
@@ -526,10 +595,12 @@ impl FileView {
         let strip_rect = full.with_min_x(full.max.x - strip_w);
         ui.painter().rect_filled(body_rect, 0.0, pal.bg);
 
+        self.layout_rows(ui, st, body_rect.width(), unified, wrap);
+
         if let Some(h) = self.scroll_to_hunk.take()
             && let Some(idx) = self.item_of_hunk(h)
         {
-            self.pending_offset = Some(idx as f32 * st.row_h - body_rect.height() / 3.0);
+            self.pending_offset = Some(self.visual_offsets[idx] as f32 * st.row_h - body_rect.height() / 3.0);
         }
 
         let mut sa = ScrollArea::vertical()
@@ -537,12 +608,12 @@ impl FileView {
             .auto_shrink(false)
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
         if let Some(off) = self.pending_offset.take() {
-            let max = (self.items.len() as f32 * st.row_h - body_rect.height()).max(0.0);
+            let max = (*self.visual_offsets.last().unwrap() as f32 * st.row_h - body_rect.height()).max(0.0);
             sa = sa.vertical_scroll_offset(off.clamp(0.0, max));
         }
         let mut child = ui.new_child(UiBuilder::new().max_rect(body_rect));
         child.spacing_mut().item_spacing = Vec2::ZERO;
-        let total = self.items.len();
+        let total = *self.visual_offsets.last().unwrap();
         let out = sa.show_rows(&mut child, st.row_h, total, |ui, range| {
             self.paint_rows(ui, range, st, unified);
         });
@@ -583,7 +654,8 @@ impl FileView {
         let hovered = resp
             .hover_pos()
             .map(|pos| range.start + ((pos.y - top) / st.row_h).max(0.0) as usize)
-            .filter(|&i| i < range.end);
+            .filter(|&i| i < range.end)
+            .map(|visual| self.visual_offsets.partition_point(|&offset| offset <= visual) - 1);
 
         let max_line = self.left.len().max(self.right.len());
         let gw = st.gutter_width(max_line);
@@ -593,11 +665,19 @@ impl FileView {
         } else {
             width / 2.0 - gw - 8.0
         };
-        self.h_max = (self.max_chars as f32 * st.char_w + 40.0 - text_w).max(0.0);
+        self.h_max = if self.wrap_width.is_some() {
+            0.0
+        } else {
+            (self.max_chars as f32 * st.char_w + 40.0 - text_w).max(0.0)
+        };
         self.h_off = self.h_off.min(self.h_max);
 
-        for (k, idx) in range.clone().enumerate() {
-            let r = Rect::from_min_size(pos2(max.left(), top + k as f32 * st.row_h), vec2(width, st.row_h));
+        let first = self.visual_offsets.partition_point(|&offset| offset <= range.start).saturating_sub(1);
+        let end = self.visual_offsets.partition_point(|&offset| offset < range.end).min(self.items.len());
+        for idx in first..end {
+            let y = top + (self.visual_offsets[idx] as f32 - range.start as f32) * st.row_h;
+            let height = (self.visual_offsets[idx + 1] - self.visual_offsets[idx]) as f32 * st.row_h;
+            let r = Rect::from_min_size(pos2(max.left(), y), vec2(width, height));
             let item = self.items[idx];
             if let Item::Fold { start, end } = item {
                 p.rect_filled(r, 0.0, pal.fold_bg);
@@ -621,15 +701,15 @@ impl FileView {
                 self.paint_unified(&p, r, item, gw, st);
             } else {
                 let half = width / 2.0;
-                let lr = Rect::from_min_size(r.min, vec2(half, st.row_h));
-                let rr = Rect::from_min_size(pos2(r.left() + half, r.top()), vec2(width - half, st.row_h));
+                let lr = Rect::from_min_size(r.min, vec2(half, r.height()));
+                let rr = Rect::from_min_size(pos2(r.left() + half, r.top()), vec2(width - half, r.height()));
                 self.paint_side(&p, lr, row_idx, Side::Left, gw, st);
                 self.paint_side(&p, rr, row_idx, Side::Right, gw, st);
                 p.vline(r.left() + half, r.y_range(), Stroke::new(1.0, pal.border));
             }
             if in_current {
                 p.rect_filled(
-                    Rect::from_min_size(r.min, vec2(3.0, st.row_h)),
+                    Rect::from_min_size(r.min, vec2(3.0, r.height())),
                     0.0,
                     pal.accent,
                 );
@@ -691,10 +771,10 @@ impl FileView {
         }
         let g = Rect::from_min_size(rect.min, vec2(gw, rect.height()));
         p.rect_filled(g, 0.0, gutter_bg);
-        paint_line_number(p, g, Some(line + 1), num_color, st);
+        paint_line_number(p, g.with_max_y(g.top() + st.row_h), Some(line + 1), num_color, st);
         let text_rect = Rect::from_min_max(pos2(g.right() + 8.0, rect.top()), rect.max);
         let job = line_job(doc.line(line), hl.line(line), emph, emph_bg, st);
-        paint_job(p, text_rect, job, self.h_off, st);
+        self.paint_text(p, text_rect, job, st);
     }
 
     fn paint_unified(&self, p: &egui::Painter, r: Rect, item: Item, gw: f32, st: &CodeStyle) {
@@ -731,16 +811,16 @@ impl FileView {
             Item::Right(_) => pal.add_fg,
             _ => pal.gutter_fg,
         };
-        paint_line_number(p, Rect::from_min_size(g.min, vec2(gw, r.height())), ln.map(|l| l + 1), num_color, st);
+        paint_line_number(p, Rect::from_min_size(g.min, vec2(gw, st.row_h)), ln.map(|l| l + 1), num_color, st);
         paint_line_number(
             p,
-            Rect::from_min_size(pos2(g.left() + gw, g.top()), vec2(gw, r.height())),
+            Rect::from_min_size(pos2(g.left() + gw, g.top()), vec2(gw, st.row_h)),
             rn.map(|l| l + 1),
             num_color,
             st,
         );
         p.text(
-            pos2(g.right() - st.char_w - 4.0, r.center().y),
+            pos2(g.right() - st.char_w - 4.0, r.top() + st.row_h / 2.0),
             Align2::LEFT_CENTER,
             sign,
             st.font.clone(),
@@ -753,7 +833,7 @@ impl FileView {
         if let Some(line) = line {
             let text_rect = Rect::from_min_max(pos2(g.right() + 8.0, r.top()), r.max);
             let job = line_job(doc.line(line), hl.line(line), emph, emph_bg, st);
-            paint_job(p, text_rect, job, self.h_off, st);
+            self.paint_text(p, text_rect, job, st);
         }
     }
 
@@ -807,11 +887,11 @@ impl FileView {
         p.rect_filled(rect, 0.0, pal.gutter_bg);
         p.vline(rect.left(), rect.y_range(), Stroke::new(1.0, pal.border));
         // Map items onto the strip; short files only use the top part of it.
-        let total = (self.items.len() as f32).max(self.last_view_h / row_h).max(1.0);
+        let total = (*self.visual_offsets.last().unwrap() as f32).max(self.last_view_h / row_h).max(1.0);
         let h = rect.height();
         for &(s, e, m) in &self.markers {
-            let y0 = rect.top() + s as f32 / total * h;
-            let y1 = (rect.top() + e as f32 / total * h).max(y0 + 2.0);
+            let y0 = rect.top() + self.visual_offsets[s] as f32 / total * h;
+            let y1 = (rect.top() + self.visual_offsets[e] as f32 / total * h).max(y0 + 2.0);
             let sides = match m {
                 Mark::Add => ChangeSides::B,
                 Mark::Del => ChangeSides::A,
@@ -839,3 +919,87 @@ impl FileView {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn long_lines() -> FileView {
+        let mut view = FileView::new(None, None, None, DiffOptions::default());
+        let left = format!("{}\nshared\nold\n", "\tlet café = 123; ".repeat(30));
+        let right = format!("{}\nshared\nnew\n", "let café = 456; ".repeat(12));
+        view.left = TextDoc::from_bytes(left.as_bytes());
+        view.right = TextDoc::from_bytes(right.as_bytes());
+        view.left_hl = highlight(&view.left, "test.rs");
+        view.right_hl = highlight(&view.right, "test.rs");
+        view.max_chars = view.left.max_line_chars().max(view.right.max_line_chars());
+        view.recompute();
+        view
+    }
+
+    #[test]
+    fn wrapping_aligns_pairs_and_reflows_with_layout_width_and_font() {
+        let ctx = egui::Context::default();
+        let mut view = long_lines();
+        let mut settings = ViewSettings::default();
+        assert!(!settings.wrap);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let st = CodeStyle::new(ui.ctx(), settings.font_size);
+            view.rebuild_items(&settings);
+            view.layout_rows(ui, &st, 600.0, false, false);
+            assert_eq!(view.visual_offsets, (0..=view.items.len()).collect::<Vec<_>>());
+            view.layout_rows(ui, &st, 600.0, false, true);
+            let narrow = view.visual_offsets[1];
+            assert!(narrow > 1);
+            let row = &view.diff.rows[0];
+            let job = view.wrap_job(line_job(view.left.line(row.left.unwrap()), view.left_hl.line(0),
+                &row.left_emph, st.pal.del_emph, &st), &st);
+            let galley = ui.painter().layout_job(job);
+            assert_eq!(narrow, galley.rows.len());
+            assert!(galley.size().y <= narrow as f32 * st.row_h + 0.1);
+            assert_eq!(view.visual_offsets[2] - view.visual_offsets[1], 1);
+            view.h_off = 100.0;
+            view.layout_rows(ui, &st, 1000.0, false, true);
+            assert!(view.visual_offsets[1] < narrow);
+            assert_eq!(view.h_off, 0.0);
+            let wider = view.visual_offsets[1];
+            let large = CodeStyle::new(ui.ctx(), 20.0);
+            view.layout_rows(ui, &large, 1000.0, false, true);
+            assert!(view.visual_offsets[1] > wider);
+            settings.unified = true;
+            view.rebuild_items(&settings);
+            view.layout_rows(ui, &st, 600.0, true, true);
+            assert!(matches!(view.items[0], Item::Left(_)));
+            assert!(matches!(view.items[1], Item::Right(_)));
+            assert!(view.visual_offsets[1] > 1);
+            assert!(view.visual_offsets[2] - view.visual_offsets[1] > 1);
+            view.layout_rows(ui, &st, 600.0, true, false);
+            assert_eq!(view.visual_offsets, (0..=view.items.len()).collect::<Vec<_>>());
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn wrapped_navigation_and_scrolling_use_visual_rows() {
+        let ctx = egui::Context::default();
+        let mut view = long_lines();
+        let mut settings = ViewSettings { wrap: true, ..Default::default() };
+        let mut output = ctx.run_ui(egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 180.0))),
+            ..Default::default()
+        }, |ui| {
+            view.ui(ui, &mut settings, false);
+            assert!(view.h_max == 0.0);
+            assert!(view.last_view_h > 0.0);
+        });
+        output.textures_delta.clear();
+        let last = view.diff.hunks.len() - 1;
+        view.goto_hunk(last);
+        let mut output = ctx.run_ui(egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 180.0))),
+            ..Default::default()
+        }, |ui| { view.ui(ui, &mut settings, false); });
+        output.textures_delta.clear();
+        assert!(view.last_offset > 0.0);
+        assert_eq!(view.current_hunk, Some(last));
+    }
+}

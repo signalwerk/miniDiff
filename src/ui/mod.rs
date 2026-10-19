@@ -35,6 +35,7 @@ pub fn dialog_footer<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> R {
 pub struct ViewSettings {
     pub unified: bool,
     pub collapse: bool,
+    pub wrap: bool,
     pub context: usize,
     pub font_size: f32,
     pub diff: DiffOptions,
@@ -46,6 +47,7 @@ impl Default for ViewSettings {
         Self {
             unified: false,
             collapse: false,
+            wrap: false,
             context: 3,
             font_size: 13.0,
             diff: DiffOptions::default(),
