@@ -20,10 +20,12 @@ landing page is in `site/`.
   The image preview was removed on purpose; images may come later, but not now.
 - **Contributions:** no code PRs, only prompt contributions in issues, which the
   maintainer runs. The project states it is created with the assistance of LLM agents.
-- **Platforms:** releases are macOS-only (universal). Linux/Windows only on request.
-  Linux must still build and run from source (zero warnings): agents use it for
-  headless screenshots via `scripts/capture-linux.sh` (Xvfb, xdotool, ImageMagick;
-  runtime needs `libxkbcommon-x11-0` and Mesa Vulkan/EGL, llvmpipe is fine).
+- **Platforms:** releases ship macOS (universal app, self-updating) and Linux x86_64
+  (tar.gz, built on ubuntu-22.04 for a low glibc floor, no self-update). Windows only on
+  request. `.github/workflows/ci.yml` keeps Linux at zero clippy warnings with passing
+  tests. Agents use Linux for headless screenshots via `scripts/capture-linux.sh` (Xvfb,
+  xdotool, ImageMagick; runtime needs `libxkbcommon-x11-0` and Mesa Vulkan/EGL,
+  llvmpipe is fine).
 - **License:** MIT (`LICENSE`).
 
 ## Commands
@@ -36,6 +38,7 @@ cargo run -- --merge LOCAL REMOTE BASE MERGED
 cargo test                                   # unit tests (diff, merge, highlight, updater)
 cargo clippy                                 # keep at zero warnings
 scripts/bundle-macos.sh [universal] [--install]   # → target/release/bundle/MiniDiff.app
+scripts/package-linux.sh [--install]              # → target/release/MiniDiff-linux-<arch>.tar.gz
 scripts/release.sh patch|minor|major|X.Y.Z        # bump, tag vX.Y.Z, push → CI release
 scripts/make-icons.sh                             # SVG → app/site icons + colours (resvg, macOS)
 scripts/screenshots.py                            # macOS native captures → site/img/ (880×520 pt)
@@ -80,8 +83,8 @@ scripts/capture-linux.sh out.png 1400 820 [keys…] -- ARGS   # headless Linux c
   (`LOCAL REMOTE [BASE MERGED]`).
 - `site/`: landing page; `.github/workflows/release.yml`: release pipeline.
   Installation docs use GitHub Releases; Tower setup details belong in the README.
-  Website copy stays platform-neutral; macOS appears only on the download button
-  and its metadata line. Platform-specific installation steps live in the README.
+  Website copy stays platform-neutral; platforms appear only on the macOS / Linux
+  download buttons, their metadata line, and the note that the macOS app updates itself. Platform-specific installation steps live in the README.
   README usage is platform-neutral (`Mod` = Command on macOS, Ctrl elsewhere);
   distinguish published macOS bundles/integrations from unverified source ports.
   GitHub description / homepage and the README link to `https://minidiff.signalwerk.ch/`.
@@ -218,8 +221,9 @@ scripts/capture-linux.sh out.png 1400 820 [keys…] -- ARGS   # headless Linux c
   The release script must refresh all three website screenshots before confirmation,
   commit their PNGs/HTML dimensions with the version, and stop if capture fails.
   `MINIDIFF_SCREENSHOT_DISPLAY=main` selects an external/main monitor (default: internal).
-- CI builds a universal app, uploads the fixed-name `MiniDiff-macos-universal.zip` and its `.sha256` to the
-  GitHub Release, and deploys `site/` + generated `update.json` + CNAME
+- CI builds a universal app and a Linux archive, uploads the fixed-name
+  `MiniDiff-macos-universal.zip` / `MiniDiff-linux-x86_64.tar.gz` and their `.sha256` to the
+  GitHub Release (`update.json` lists both; the app only reads `macos`), and deploys `site/` + generated `update.json` + CNAME
   `minidiff.signalwerk.ch` directly with the official Pages actions. Pages uses
   Actions (`build_type: workflow`), with `pages: write` / `id-token: write`.
   The `github-pages` environment allows the `main` branch and `v*` tags.
