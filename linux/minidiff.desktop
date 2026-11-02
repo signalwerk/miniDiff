@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MiniDiff
+Comment=Compare text files and folders, resolve merges
+Exec=minidiff %F
+Icon=minidiff
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=minidiff
