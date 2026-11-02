@@ -891,7 +891,7 @@ impl MergeView {
             .map(|pos| range.start + ((pos.y - max.top()) / st.row_h).max(0.0) as usize)
             .filter(|&i| i < range.end)
             .map(|i| self.items[i].chunk());
-        self.paint_gutters(ui, &p, &range, max.top(), &cols, st, &mut clicked_action);
+        self.paint_gutters(&p, &range, max.top(), &cols, st);
         for (k, idx) in range.clone().enumerate() {
             let r = Rect::from_min_size(pos2(max.left(), max.top() + k as f32 * st.row_h), vec2(width, st.row_h));
             let item = self.items[idx];
@@ -990,19 +990,10 @@ impl MergeView {
         }
     }
 
-    /// Meld-style connectors: each change is a ribbon from an input column into its
-    /// neighbour, solid when that input flows into the result. The arrow takes it.
-    #[allow(clippy::too_many_arguments)]
-    fn paint_gutters(
-        &self,
-        ui: &mut Ui,
-        p: &egui::Painter,
-        range: &Range<usize>,
-        top: f32,
-        cols: &[(Col, Rect)],
-        st: &CodeStyle,
-        clicked: &mut Option<(usize, Resolution)>,
-    ) {
+    /// Kaleidoscope-style connectors. Each side of a gutter gets an edge bar as long as
+    /// the change's lines (an insertion line across the pane when it has none), and one
+    /// curve joins the two bars' centres. Solid when that input is in the result.
+    fn paint_gutters(&self, p: &egui::Painter, range: &Range<usize>, top: f32, cols: &[(Col, Rect)], st: &CodeStyle) {
         let pal = st.pal;
         let row_h = st.row_h;
         let y_of = |idx: usize| top + (idx as f32 - range.start as f32) * row_h;
@@ -1016,7 +1007,6 @@ impl MergeView {
             p.vline(g.left(), g.y_range(), Stroke::new(1.0, pal.border));
             p.vline(g.right(), g.y_range(), Stroke::new(1.0, pal.border));
         }
-        let modifier = ui.input(|i| i.modifiers.command);
         for &(s, e, ci) in &self.markers {
             if e <= range.start || s >= range.end {
                 continue;
@@ -1029,7 +1019,7 @@ impl MergeView {
                 Col::Remote => c.remote.len(),
                 Col::Result => self.result_lens[ci],
             } as f32;
-            // A side without lines shows where the change would go (Kaleidoscope style).
+            // A side without lines shows where the change would go.
             for (col, cr) in cols {
                 if len(*col) > 0.0 {
                     continue;
@@ -1055,51 +1045,24 @@ impl MergeView {
                     Col::Remote if touched => pal.add_fg,
                     _ => pal.text_dim,
                 };
-                let included = includes(&c.resolution, input);
-                let stroke = if included {
-                    Stroke::new(1.5, color)
-                } else {
-                    Stroke::new(1.0, color.gamma_multiply(0.55))
+                // Fade only inputs a decision left out; open conflicts stay vivid.
+                let left_out = c.resolution != Resolution::Unresolved && !includes(&c.resolution, input);
+                let color = if left_out { color.gamma_multiply(0.4) } else { color };
+                let stroke = Stroke::new(1.5, color);
+                let span = |col: Col| {
+                    let n = len(col);
+                    if n > 0.0 { (first_line, first_line + n * row_h) } else { (first_line + 1.0, first_line + 1.0) }
                 };
-                let (l0, l1) = (first_line, first_line + len(left) * row_h);
-                let (r0, r1) = (first_line, first_line + len(right) * row_h);
-                paint_connector(p, g.left(), g.right(), (l0, l1), (r0, r1), stroke);
-
-                if input == Col::Result {
-                    continue;
+                let (l, r) = (span(left), span(right));
+                // Edge bars hug each pane's border on the gutter side.
+                let bar = Stroke::new(2.0, color);
+                if l.1 > l.0 {
+                    p.vline(g.left() + 1.0, l.0..=l.1, bar);
                 }
-                // Push arrow at the top of the input side, pointing at the result.
-                let towards_right = input != Col::Remote;
-                let x = if towards_right { g.left() + 10.0 } else { g.right() - 10.0 };
-                let center = pos2(x, first_line + row_h * 0.5);
-                let hit = Rect::from_center_size(center, Vec2::splat(18.0));
-                let (name, key, res, append) = match input {
-                    Col::Local => ("A", "a", Resolution::Local, (Resolution::Remote, Resolution::RemoteThenLocal)),
-                    Col::Remote => ("B", "b", Resolution::Remote, (Resolution::Local, Resolution::LocalThenRemote)),
-                    _ => ("base", "0", Resolution::Base, (Resolution::Unresolved, Resolution::Base)),
-                };
-                let tip = if input == Col::Base {
-                    format!("Take base into the result  — {key}")
-                } else {
-                    format!("Take {name} into the result  — {key}\n{}-click to add it after the other side", super::cmd().trim_end_matches('+'))
-                };
-                let resp = ui
-                    .interact(hit, ui.id().with(("push", self.id, ci, input as u8)), Sense::click())
-                    .on_hover_cursor(CursorIcon::PointingHand)
-                    .on_hover_text(tip);
-                let hot = resp.hovered();
-                let disc = if included || hot { color } else { pal.bg };
-                p.circle(center, 8.0, disc, Stroke::new(1.0, color));
-                let ink = if included || hot { Color32::WHITE } else { color };
-                let d = if towards_right { 1.0 } else { -1.0 };
-                p.add(egui::Shape::convex_polygon(
-                    vec![pos2(center.x + 4.0 * d, center.y), pos2(center.x - 2.5 * d, center.y - 4.0), pos2(center.x - 2.5 * d, center.y + 4.0)],
-                    ink,
-                    Stroke::NONE,
-                ));
-                if resp.clicked() {
-                    *clicked = Some((ci, if modifier && c.resolution == append.0 { append.1 } else { res }));
+                if r.1 > r.0 {
+                    p.vline(g.right() - 1.0, r.0..=r.1, bar);
                 }
+                paint_connector(p, g.left(), g.right(), (l.0 + l.1) / 2.0, (r.0 + r.1) / 2.0, stroke);
             }
         }
     }
@@ -1502,26 +1465,17 @@ fn status_label(c: &crate::merge::Chunk, pal: &Palette) -> (String, Color32) {
     }
 }
 
-/// Thin connector lines between `x0` and `x1` joining the edges of two vertical
-/// spans with smooth, flat-ended S-curves (Kaleidoscope style).
-fn paint_connector(p: &egui::Painter, x0: f32, x1: f32, left: (f32, f32), right: (f32, f32), stroke: Stroke) {
-    const STEPS: usize = 20;
+/// One connector between `x0` and `x1`: a smooth, flat-ended S-curve from `y0` to `y1`.
+fn paint_connector(p: &egui::Painter, x0: f32, x1: f32, y0: f32, y1: f32, stroke: Stroke) {
+    const STEPS: usize = 24;
     let ease = |t: f32| t * t * (3.0 - 2.0 * t);
-    let curve = |a: f32, b: f32| -> Vec<egui::Pos2> {
-        (0..=STEPS)
-            .map(|i| {
-                let t = i as f32 / STEPS as f32;
-                pos2(x0 + (x1 - x0) * t, a + (b - a) * ease(t))
-            })
-            .collect()
-    };
-    // An empty side's insertion line sits just below the chunk header.
-    let edge = |(top, bottom): (f32, f32)| if top == bottom { (top + 1.0, bottom + 1.0) } else { (top, bottom) };
-    let (left, right) = (edge(left), edge(right));
-    p.add(egui::Shape::line(curve(left.0, right.0), stroke));
-    if left.1 != left.0 || right.1 != right.0 {
-        p.add(egui::Shape::line(curve(left.1, right.1), stroke));
-    }
+    let points = (0..=STEPS)
+        .map(|i| {
+            let t = i as f32 / STEPS as f32;
+            pos2(x0 + (x1 - x0) * t, y0 + (y1 - y0) * ease(t))
+        })
+        .collect();
+    p.add(egui::Shape::line(points, stroke));
 }
 
 fn unresolved_conflicts_contents(ui: &mut Ui, file_name: &str, open: usize, error: Option<&str>) -> Option<bool> {

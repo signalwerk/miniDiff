@@ -176,11 +176,11 @@ scripts/capture-linux.sh out.png 1400 820 [keys…] -- ARGS   # headless Linux c
   Merge inline emphasis reuses file-diff line pairing/word diffs, against Base in three-way
   merges or A/B without Base. Cached ranges follow source lines into the result and swap with inputs.
   Merge columns are separated by Kaleidoscope-style connector gutters (`GUTTER_W`, code
-  background): each change draws thin flat-ended S-curves joining the top/bottom edges of
-  the neighbours' real line spans (no filled band), solid when that input is included,
-  faint otherwise. A side with no lines shows a coloured insertion line across its pane
-  and blank (unhatched) rows. The arrow disc at the input's top takes it (Mod-click
-  appends it after the other side). Chunk header rows show A+B/B+A/Base/Edit chips only
+  background). Per change and gutter: an edge bar on each side exactly as long as that
+  side's lines, and one flat-ended S-curve joining the two bars' centres (no fill, no
+  arrows). A side with no lines shows a coloured insertion line across its pane instead
+  of a bar, and blank (unhatched) rows. Colour follows the gutter's input; open conflicts
+  stay vivid, inputs a decision left out fade. Chunk header rows show A+B/B+A/Base/Edit chips only
   for the current or hovered change and open conflicts; other rows show status only.
   A bottom focus bar (`FOCUS_BAR_H`) lists the current change's kind, every choice with
   its key cap, `⇧N`/`⇧P` unresolved-conflict jumps, and a ready-to-save cue.

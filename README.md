@@ -21,8 +21,8 @@ A native diff and merge tool for **text files and folders**, built in Rust with
 - **Merge**: a three-way merge (diff3) with columns A · Result · B (plus Base on request).
   - Non-conflicting changes are merged automatically.
   - For each conflict you choose A, B, A+B, B+A or Base, or edit the result by hand.
-  - Connector lines between the columns show which input flows into the result
-    (solid when included); click the arrow beside a change to take that side (`Mod+click` adds it after the other side).
+  - Connector lines between the columns link each change in A and B to its place in
+    the result; sides a decision left out fade.
   - A bar at the bottom lists every choice for the current change with its key,
     and jumps to the next unresolved conflict.
   - It also reads files that already contain git conflict markers.
