@@ -23,6 +23,8 @@ static CTX: OnceLock<egui::Context> = OnceLock::new();
 static EXIT_CODE: AtomicI32 = AtomicI32::new(0);
 static MENU_INBOX: Mutex<Vec<MenuAction>> = Mutex::new(Vec::new());
 
+// Only the macOS menu bar and open handler produce these today.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
 pub enum MenuAction {
     About, Preferences, CheckUpdates, NewWindow, CloseWindow, Home, Reload, Swap, Shortcuts, Quit, Reopen,
@@ -41,6 +43,7 @@ pub fn set_context(ctx: &egui::Context) {
     let _ = CTX.set(ctx.clone());
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn push(incoming: Incoming) {
     INBOX.lock().unwrap().push(incoming);
     if let Some(ctx) = CTX.get() {

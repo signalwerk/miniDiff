@@ -21,6 +21,10 @@ A native diff and merge tool for **text files and folders**, built in Rust with
 - **Merge**: a three-way merge (diff3) with columns A · Result · B (plus Base on request).
   - Non-conflicting changes are merged automatically.
   - For each conflict you choose A, B, A+B, B+A or Base, or edit the result by hand.
+  - Connector ribbons between the columns show which input flows into the result;
+    click a ribbon's arrow to take that side (`Mod+click` adds it after the other side).
+  - A bar at the bottom lists every choice for the current change with its key,
+    and jumps to the next unresolved conflict.
   - It also reads files that already contain git conflict markers.
 - **Ways in**:
   - Drop two items onto the window. On macOS, you can also drop them onto the app icon.
@@ -153,6 +157,7 @@ Option (`⌥`) on macOS and Alt elsewhere.
 | Toggle file list | `b` |
 | Merge: take A / B / A+B / B+A / base | `a` `b` / `3` `4` / `0` |
 | Merge: edit / reset chunk | `e` / `r` |
+| Merge: next / previous unresolved conflict | `Shift+N` / `Shift+P` |
 | Save merge | `Mod+S` |
 | New window / close window | `Mod+N` / `Mod+W` |
 | Swap sides / reload / start screen | `Mod+Shift+S` / `Mod+R` / `Mod+O` |
@@ -179,6 +184,11 @@ cargo build --release
 cargo test
 cargo clippy
 ```
+
+Linux builds from source too (published bundles stay macOS-only). On Debian/Ubuntu
+the window needs `libxkbcommon-x11-0` and a Vulkan or EGL driver (for example
+`mesa-vulkan-drivers`). `scripts/capture-linux.sh` renders a view headlessly with
+Xvfb, for screenshots without a display.
 
 For macOS app bundles:
 

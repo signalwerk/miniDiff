@@ -22,6 +22,11 @@ use crate::theme::Palette;
 
 type LineEmphasis = Vec<Vec<Range<usize>>>;
 
+/// Width of the connector gutter between two columns.
+const GUTTER_W: f32 = 30.0;
+/// Height of the action bar for the current change.
+const FOCUS_BAR_H: f32 = 44.0;
+
 fn pair_emphasis(a: &[String], b: &[String]) -> [LineEmphasis; 2] {
     let doc = |lines: &[String]| TextDoc::from_lines(&lines.iter().map(String::as_str).collect::<Vec<_>>(), false, true);
     let diff = diff_docs(&doc(a), &doc(b), DiffOptions::default());
@@ -348,6 +353,14 @@ impl MergeView {
         })
     }
 
+    fn prev_conflict(&self, from: Option<usize>) -> Option<usize> {
+        let end = from.unwrap_or(self.doc.chunks.len());
+        (0..end).rev().find(|&i| {
+            let c = &self.doc.chunks[i];
+            c.kind == ChunkKind::Conflict && c.resolution == Resolution::Unresolved
+        })
+    }
+
     fn next_change(&self, from: Option<usize>) -> Option<usize> {
         let start = from.map_or(0, |f| f + 1);
         (start..self.doc.chunks.len()).find(|&i| self.doc.chunks[i].is_change())
@@ -460,12 +473,21 @@ impl MergeView {
         self.rebuild_items(show_base, settings.collapse, settings.context);
         self.headers(ui, &st, show_base);
         self.body(ui, &st, show_base);
+        self.focus_bar(ui, pal);
         self.modals(ui, &mut action);
         action
     }
 
     fn handle_keys(&mut self, ui: &mut Ui, settings: &mut ViewSettings, row_h: f32) {
         let k = |ui: &mut Ui, m: Modifiers, key: Key| ui.input_mut(|i| i.consume_key(m, key));
+        // Shifted variants first: plain patterns also match shifted presses.
+        if k(ui, Modifiers::SHIFT, Key::N) {
+            self.advance();
+        }
+        if k(ui, Modifiers::SHIFT, Key::P) {
+            let p = self.prev_conflict(self.current).or_else(|| self.prev_conflict(None));
+            self.goto(p);
+        }
         if k(ui, Modifiers::NONE, Key::N) || k(ui, Modifiers::ALT, Key::ArrowDown) || k(ui, Modifiers::NONE, Key::J) {
             let n = self.next_change(self.current);
             self.goto(n);
@@ -585,15 +607,17 @@ impl MergeView {
                 } else if open == 0 {
                     ui.label(RichText::new(format!("✔ All {total} conflicts resolved")).color(pal.text_dim).strong());
                 } else {
-                    if ui.add(egui::Label::new(
+                    let label = egui::Label::new(
                         RichText::new(format!("⚠ {open} of {total} conflict{} unresolved", if total == 1 { "" } else { "s" }))
                             .color(pal.conflict)
                             .strong(),
-                    ).sense(Sense::click()))
+                    ).sense(Sense::click());
+                    let clicked = ui.add(label)
                         .on_hover_cursor(CursorIcon::PointingHand)
-                        .on_hover_text("Go to the next unresolved conflict")
-                        .clicked()
-                    {
+                        .on_hover_text("Go to the next unresolved conflict  (⇧N)")
+                        .clicked();
+                    progress_bar(ui, (total - open) as f32 / total as f32, pal);
+                    if clicked {
                         self.advance();
                     }
                 }
@@ -636,40 +660,166 @@ impl MergeView {
         });
     }
 
+    /// Bottom bar: what the current change is, every way to resolve it (with its
+    /// key), and navigation. Makes the keyboard flow discoverable.
+    fn focus_bar(&mut self, ui: &mut Ui, pal: &Palette) {
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), FOCUS_BAR_H), Sense::hover());
+        ui.painter().rect_filled(rect, 0.0, pal.toolbar);
+        ui.painter().hline(rect.x_range(), rect.top() + 0.5, Stroke::new(1.0, pal.border));
+        let inner = rect.shrink2(vec2(12.0, 0.0));
+        let compact = rect.width() < 1100.0;
+        let mut chosen: Option<Resolution> = None;
+        let mut edit = false;
+        let mut nav: Option<Option<usize>> = None;
+        ui.scope_builder(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)), |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let Some(ci) = self.current.filter(|&ci| self.doc.chunks.get(ci).is_some_and(|c| c.is_change())) else {
+                ui.label(RichText::new("Select a change, or press").color(pal.text_dim));
+                key_cap(ui, "n", pal);
+                ui.label(RichText::new("to go to the first one.").color(pal.text_dim));
+                return;
+            };
+            let c = &self.doc.chunks[ci];
+            let (kind, kind_color) = match c.kind {
+                ChunkKind::Conflict => ("Conflict", pal.conflict),
+                ChunkKind::Local => ("Changed in A", pal.del_fg),
+                ChunkKind::Remote => ("Changed in B", pal.add_fg),
+                ChunkKind::Both => ("Same change in A and B", pal.mod_fg),
+                ChunkKind::Stable => ("Unchanged", pal.text_dim),
+            };
+            pill(ui, kind, kind_color);
+            if !compact {
+                let (status, color) = match &c.resolution {
+                    Resolution::Unresolved => ("Pick what goes into the result".to_owned(), pal.text_dim),
+                    r if *r == default_resolution(c.kind) => (format!("Result: {} (automatic)", describe(r)), resolution_color(r, pal)),
+                    r => (format!("Result: {}", describe(r)), resolution_color(r, pal)),
+                };
+                ui.label(RichText::new(status).color(color));
+                ui.add_space(6.0);
+            }
+            ui.separator();
+            let res = c.resolution.clone();
+            let action = |ui: &mut Ui, key: &str, label: &str, short: &str, color: Color32, selected: bool, tip: &str| {
+                action_button(ui, key, if compact { short } else { label }, color, selected, pal).on_hover_text(tip).clicked()
+            };
+            if action(ui, "a", "Use A", "A", pal.del_fg, res == Resolution::Local, "Take A (local)") {
+                chosen = Some(Resolution::Local);
+            }
+            if action(ui, "b", "Use B", "B", pal.add_fg, res == Resolution::Remote, "Take B (remote)") {
+                chosen = Some(Resolution::Remote);
+            }
+            if action(ui, "3", "A then B", "A+B", pal.mod_fg, res == Resolution::LocalThenRemote, "Keep both, A first") {
+                chosen = Some(Resolution::LocalThenRemote);
+            }
+            if action(ui, "4", "B then A", "B+A", pal.mod_fg, res == Resolution::RemoteThenLocal, "Keep both, B first") {
+                chosen = Some(Resolution::RemoteThenLocal);
+            }
+            if self.doc.has_base && action(ui, "0", "Base", "Base", pal.text_dim, res == Resolution::Base, "Take the common ancestor") {
+                chosen = Some(Resolution::Base);
+            }
+            if action(ui, "e", "Edit…", "Edit", pal.accent, matches!(res, Resolution::Custom(_)), "Edit the result by hand") {
+                edit = true;
+            }
+            let default = default_resolution(c.kind);
+            if res != default && action(ui, "r", "Reset", "Reset", pal.text_dim, false, "Back to the automatic result") {
+                chosen = Some(default);
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let changes = self.doc.chunks.iter().filter(|c| c.is_change()).count();
+                let step = self.doc.chunks[..=ci].iter().filter(|c| c.is_change()).count();
+                if action_button(ui, "n", if compact { "" } else { "Next" }, pal.text, false, pal).on_hover_text("Next change").clicked() {
+                    nav = Some(self.next_change(Some(ci)));
+                }
+                if action_button(ui, "p", if compact { "" } else { "Previous" }, pal.text, false, pal).on_hover_text("Previous change").clicked() {
+                    nav = Some(self.prev_change(Some(ci)));
+                }
+                ui.label(RichText::new(format!("{step} / {changes}")).color(pal.text_dim).monospace());
+                if self.doc.conflict_count() > 0 && self.doc.unresolved_count() == 0 && self.needs_save() {
+                    ui.separator();
+                    key_cap(ui, &format!("{}S", super::cmd()), pal);
+                    ui.label(RichText::new("✔ All conflicts resolved, ready to save").color(pal.add_fg));
+                }
+                if self.doc.unresolved_count() > 0 {
+                    ui.separator();
+                    if action_button(ui, "⇧N", if compact { "" } else { "Next conflict" }, pal.conflict, false, pal)
+                        .on_hover_text("Jump to the next unresolved conflict")
+                        .clicked()
+                    {
+                        nav = Some(self.next_conflict(Some(ci), true).or_else(|| self.next_conflict(None, true)));
+                    }
+                }
+            });
+        });
+        if let Some(target) = nav {
+            self.goto(target);
+        }
+        if let Some(ci) = self.current {
+            if let Some(res) = chosen {
+                self.set_resolution(ci, res);
+                self.advance();
+            }
+            if edit {
+                self.start_edit(ci);
+            }
+        }
+    }
+
     fn columns(&self, rect: Rect, show_base: bool) -> Vec<(Col, Rect)> {
         let cols: &[Col] = if show_base {
             &[Col::Local, Col::Base, Col::Result, Col::Remote]
         } else {
             &[Col::Local, Col::Result, Col::Remote]
         };
-        let w = rect.width() / cols.len() as f32;
+        // Connector gutters (Meld style) sit between neighbouring columns.
+        let gaps = (cols.len() - 1) as f32 * GUTTER_W;
+        let w = ((rect.width() - gaps) / cols.len() as f32).max(1.0);
         cols.iter()
             .enumerate()
-            .map(|(i, c)| (*c, Rect::from_min_size(pos2(rect.left() + i as f32 * w, rect.top()), vec2(w, rect.height()))))
+            .map(|(i, c)| {
+                let x = rect.left() + i as f32 * (w + GUTTER_W);
+                (*c, Rect::from_min_size(pos2(x, rect.top()), vec2(w, rect.height())))
+            })
             .collect()
     }
 
     fn headers(&self, ui: &mut Ui, st: &CodeStyle, show_base: bool) {
         let pal = st.pal;
-        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
         let body = rect.with_max_x(rect.max.x - 12.0);
         let p = ui.painter();
         p.rect_filled(rect, 0.0, pal.panel);
         p.hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, pal.border));
-        for (col, r) in self.columns(body, show_base) {
+        let cols = self.columns(body, show_base);
+        let result_name = self
+            .output
+            .as_ref()
+            .and_then(|o| o.file_name())
+            .map_or_else(|| self.file_name.clone(), |n| n.to_string_lossy().into_owned());
+        for (i, (col, r)) in cols.iter().enumerate() {
             let (tag, color, text) = match col {
-                Col::Local => ("A", pal.del_fg, self.labels[0].as_str()),
-                Col::Base => ("◇", pal.text_dim, self.labels[1].as_str()),
-                Col::Result => ("=", pal.text_dim, "Result"),
-                Col::Remote => ("B", pal.add_fg, self.labels[2].as_str()),
+                Col::Local => ("A", pal.del_fg, self.labels[0].clone()),
+                Col::Base => ("◇", pal.text_dim, self.labels[1].clone()),
+                Col::Result => ("=", pal.accent, format!("Result · {result_name}")),
+                Col::Remote => ("B", pal.add_fg, self.labels[2].clone()),
             };
             let clip = p.with_clip_rect(r.shrink2(vec2(2.0, 0.0)));
             let badge = Rect::from_center_size(pos2(r.left() + 18.0, r.center().y), vec2(18.0, 16.0));
             clip.rect_filled(badge, 4.0, color);
             clip.text(badge.center(), Align2::CENTER_CENTER, tag, FontId::proportional(11.0), Color32::WHITE);
-            clip.text(pos2(r.left() + 34.0, r.center().y), Align2::LEFT_CENTER, text, FontId::proportional(12.5), pal.text);
-            if r.left() > rect.left() {
-                p.vline(r.left(), r.y_range(), Stroke::new(1.0, pal.border));
+            let strong = *col == Col::Result;
+            clip.text(
+                pos2(r.left() + 34.0, r.center().y),
+                Align2::LEFT_CENTER,
+                text,
+                FontId::proportional(12.5),
+                if strong { pal.text } else { pal.text.gamma_multiply(0.85) },
+            );
+            if i > 0 {
+                let prev = cols[i - 1].1;
+                let gutter = Rect::from_x_y_ranges(prev.right()..=r.left(), rect.y_range());
+                p.rect_filled(gutter, 0.0, pal.gutter_bg);
+                p.vline(gutter.left(), rect.y_range(), Stroke::new(1.0, pal.border));
+                p.vline(gutter.right(), rect.y_range(), Stroke::new(1.0, pal.border));
             }
         }
     }
@@ -677,6 +827,7 @@ impl MergeView {
     fn body(&mut self, ui: &mut Ui, st: &CodeStyle, show_base: bool) {
         let pal = st.pal;
         let full = ui.available_rect_before_wrap();
+        let full = full.with_max_y((full.max.y - FOCUS_BAR_H).max(full.min.y + st.row_h));
         let strip_w = 12.0;
         let body_rect = full.with_max_x(full.max.x - strip_w);
         let strip_rect = full.with_min_x(full.max.x - strip_w);
@@ -732,6 +883,15 @@ impl MergeView {
 
         let mut clicked_action: Option<(usize, Resolution)> = None;
         let mut edit: Option<usize> = None;
+        // Chunk under the pointer, even while a chip or gutter arrow has the hover.
+        let hover_chunk = ui
+            .ctx()
+            .pointer_hover_pos()
+            .filter(|pos| area.contains(*pos) && ui.clip_rect().contains(*pos))
+            .map(|pos| range.start + ((pos.y - max.top()) / st.row_h).max(0.0) as usize)
+            .filter(|&i| i < range.end)
+            .map(|i| self.items[i].chunk());
+        self.paint_gutters(ui, &p, &range, max.top(), &cols, st, &mut clicked_action);
         for (k, idx) in range.clone().enumerate() {
             let r = Rect::from_min_size(pos2(max.left(), max.top() + k as f32 * st.row_h), vec2(width, st.row_h));
             let item = self.items[idx];
@@ -757,15 +917,13 @@ impl MergeView {
                     }
                 }
                 MItem::Action(_) => {
-                    self.paint_action_row(ui, &p, r, &cols, ci, st, &mut clicked_action, &mut edit);
+                    let controls = self.current == Some(ci) || hover_chunk == Some(ci);
+                    self.paint_action_row(ui, &p, r, &cols, ci, st, controls, &mut clicked_action, &mut edit);
                 }
                 MItem::Line { k, .. } => {
                     for (col, cr) in &cols {
                         let cell = Rect::from_x_y_ranges(cr.x_range(), r.y_range());
                         self.paint_cell(&p, cell, *col, ci, k, gw, st);
-                    }
-                    for (_, cr) in cols.iter().skip(1) {
-                        p.vline(cr.left(), r.y_range(), Stroke::new(1.0, pal.border));
                     }
                 }
             }
@@ -843,6 +1001,107 @@ impl MergeView {
         }
     }
 
+    /// Meld-style connectors: each change is a ribbon from an input column into its
+    /// neighbour, solid when that input flows into the result. The arrow takes it.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_gutters(
+        &self,
+        ui: &mut Ui,
+        p: &egui::Painter,
+        range: &Range<usize>,
+        top: f32,
+        cols: &[(Col, Rect)],
+        st: &CodeStyle,
+        clicked: &mut Option<(usize, Resolution)>,
+    ) {
+        let pal = st.pal;
+        let row_h = st.row_h;
+        let y_of = |idx: usize| top + (idx as f32 - range.start as f32) * row_h;
+        let y_range = top..=top + range.len() as f32 * row_h;
+        let gutters: Vec<(Col, Col, Rect)> = cols
+            .windows(2)
+            .map(|w| (w[0].0, w[1].0, Rect::from_x_y_ranges(w[0].1.right()..=w[1].1.left(), y_range.clone())))
+            .collect();
+        for (_, _, g) in &gutters {
+            p.rect_filled(*g, 0.0, pal.gutter_bg);
+            p.vline(g.left(), g.y_range(), Stroke::new(1.0, pal.border));
+            p.vline(g.right(), g.y_range(), Stroke::new(1.0, pal.border));
+        }
+        let modifier = ui.input(|i| i.modifiers.command);
+        for &(s, e, ci) in &self.markers {
+            if e <= range.start || s >= range.end {
+                continue;
+            }
+            let c = &self.doc.chunks[ci];
+            let first_line = y_of(s + 1);
+            let len = |col: Col| match col {
+                Col::Local => c.local.len(),
+                Col::Base => c.base.len(),
+                Col::Remote => c.remote.len(),
+                Col::Result => self.result_lens[ci],
+            } as f32;
+            for &(left, right, g) in &gutters {
+                // The input side of this gutter: whatever is not the result.
+                let input = if left == Col::Result { right } else { left };
+                let touched = match input {
+                    Col::Local => matches!(c.kind, ChunkKind::Local | ChunkKind::Both | ChunkKind::Conflict),
+                    Col::Remote => matches!(c.kind, ChunkKind::Remote | ChunkKind::Both | ChunkKind::Conflict),
+                    _ => false,
+                };
+                let color = match input {
+                    Col::Local if touched => pal.del_fg,
+                    Col::Remote if touched => pal.add_fg,
+                    _ => pal.text_dim,
+                };
+                let included = includes(&c.resolution, input);
+                let (fill, stroke) = if included {
+                    (color.gamma_multiply(if pal.dark { 0.30 } else { 0.24 }), Stroke::new(1.5, color))
+                } else {
+                    (color.gamma_multiply(0.10), Stroke::new(1.0, color.gamma_multiply(0.5)))
+                };
+                let (l0, l1) = (first_line, first_line + len(left) * row_h);
+                let (r0, r1) = (first_line, first_line + len(right) * row_h);
+                paint_ribbon(p, g.left(), g.right(), (l0, l1), (r0, r1), fill, stroke);
+
+                if input == Col::Result {
+                    continue;
+                }
+                // Push arrow at the top of the input side, pointing at the result.
+                let towards_right = input != Col::Remote;
+                let x = if towards_right { g.left() + 10.0 } else { g.right() - 10.0 };
+                let center = pos2(x, first_line + row_h * 0.5);
+                let hit = Rect::from_center_size(center, Vec2::splat(18.0));
+                let (name, key, res, append) = match input {
+                    Col::Local => ("A", "a", Resolution::Local, (Resolution::Remote, Resolution::RemoteThenLocal)),
+                    Col::Remote => ("B", "b", Resolution::Remote, (Resolution::Local, Resolution::LocalThenRemote)),
+                    _ => ("base", "0", Resolution::Base, (Resolution::Unresolved, Resolution::Base)),
+                };
+                let tip = if input == Col::Base {
+                    format!("Take base into the result  — {key}")
+                } else {
+                    format!("Take {name} into the result  — {key}\n{}-click to add it after the other side", super::cmd().trim_end_matches('+'))
+                };
+                let resp = ui
+                    .interact(hit, ui.id().with(("push", self.id, ci, input as u8)), Sense::click())
+                    .on_hover_cursor(CursorIcon::PointingHand)
+                    .on_hover_text(tip);
+                let hot = resp.hovered();
+                let disc = if included || hot { color } else { pal.bg };
+                p.circle(center, 8.0, disc, Stroke::new(1.0, color));
+                let ink = if included || hot { Color32::WHITE } else { color };
+                let d = if towards_right { 1.0 } else { -1.0 };
+                p.add(egui::Shape::convex_polygon(
+                    vec![pos2(center.x + 4.0 * d, center.y), pos2(center.x - 2.5 * d, center.y - 4.0), pos2(center.x - 2.5 * d, center.y + 4.0)],
+                    ink,
+                    Stroke::NONE,
+                ));
+                if resp.clicked() {
+                    *clicked = Some((ci, if modifier && c.resolution == append.0 { append.1 } else { res }));
+                }
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn paint_action_row(
         &self,
@@ -852,21 +1111,23 @@ impl MergeView {
         cols: &[(Col, Rect)],
         ci: usize,
         st: &CodeStyle,
+        controls: bool,
         clicked: &mut Option<(usize, Resolution)>,
         edit: &mut Option<usize>,
     ) {
         let pal = st.pal;
         let c = &self.doc.chunks[ci];
         let color = self.chunk_color(ci, pal).unwrap_or(pal.border);
-        p.rect_filled(r, 0.0, pal.toolbar);
+        let open_conflict = c.kind == ChunkKind::Conflict && c.resolution == Resolution::Unresolved;
+        p.rect_filled(r, 0.0, if open_conflict { pal.conflict_bg } else { pal.toolbar });
         p.hline(r.x_range(), r.top() + 0.5, Stroke::new(1.0, color.gamma_multiply(0.7)));
         let font = FontId::proportional(11.5);
 
         let chip = |x: f32, text: &str, selected: bool, color: Color32, tip: &str, salt: usize| -> (f32, bool) {
             let galley = p.layout_no_wrap(text.to_owned(), font.clone(), color);
             let labels = match salt {
-                1 => Some(["Use A  ▶", "✔ Included A"]),
-                2 => Some(["◀  Use B", "✔ Included B"]),
+                1 => Some(["Use A", "✔ Included A"]),
+                2 => Some(["Use B", "✔ Included B"]),
                 3 => Some(["Use base", "✔ Included base"]),
                 _ => None,
             };
@@ -876,8 +1137,8 @@ impl MergeView {
                 .fold(0.0, f32::max));
             let w = width + 14.0;
             // The selected outline occupies the first two points of the row.
-            let top = if labels.is_some() { 4.0 } else { 2.0 };
-            let rect = Rect::from_min_size(pos2(x, r.top() + top), vec2(w, r.height() - top - 2.0));
+            let top = if labels.is_some() { 4.0 } else { 3.0 };
+            let rect = Rect::from_min_size(pos2(x, r.top() + top), vec2(w, r.height() - top - 3.0));
             let resp = ui
                 .interact(rect, ui.id().with(("chip", self.id, ci, salt)), Sense::click())
                 .on_hover_cursor(CursorIcon::PointingHand)
@@ -907,13 +1168,13 @@ impl MergeView {
             let x0 = cr.left() + 8.0;
             match col {
                 Col::Local => {
-                    let (_, hit) = chip(x0, if uses_local { "✔ Included A" } else { "Use A  ▶" }, uses_local, pal.del_fg, "Take A (local)  — key a / 1", 1);
+                    let (_, hit) = chip(x0, if uses_local { "✔ Included A" } else { "Use A" }, uses_local, pal.del_fg, "Take A (local)  — key a / 1", 1);
                     if hit {
                         *clicked = Some((ci, Resolution::Local));
                     }
                 }
                 Col::Remote => {
-                    let (_, hit) = chip(x0, if uses_remote { "✔ Included B" } else { "◀  Use B" }, uses_remote, pal.add_fg, "Take B (remote)  — key b / 2", 2);
+                    let (_, hit) = chip(x0, if uses_remote { "✔ Included B" } else { "Use B" }, uses_remote, pal.add_fg, "Take B (remote)  — key b / 2", 2);
                     if hit {
                         *clicked = Some((ci, Resolution::Remote));
                     }
@@ -925,15 +1186,14 @@ impl MergeView {
                     }
                 }
                 Col::Result => {
-                    let (label, lc) = match (c.kind, res) {
-                        (ChunkKind::Conflict, Resolution::Unresolved) => ("⚠ Conflict".to_owned(), pal.conflict),
-                        (ChunkKind::Conflict, r) => (format!("✔ {}", describe(r)), resolution_color(r, pal)),
-                        (_, r) if *r == default_resolution(c.kind) => (format!("Auto · {}", describe(r)), resolution_color(r, pal)),
-                        (_, r) => (format!("✔ {}", describe(r)), resolution_color(r, pal)),
-                    };
+                    let (label, lc) = status_label(c, pal);
                     let galley = p.layout_no_wrap(label, FontId::proportional(11.5), lc);
                     let gw = galley.size().x;
                     p.galley(pos2(x0, r.center().y - galley.size().y / 2.0), galley, lc);
+                    // Secondary choices only for the change at hand, or open conflicts.
+                    if !(controls || open_conflict) {
+                        continue;
+                    }
                     let mut x = x0 + gw + 10.0;
                     let (nx, hit) = chip(x, "A+B", *res == Resolution::LocalThenRemote, pal.mod_fg, "A then B  — key 3", 4);
                     x = nx;
@@ -965,9 +1225,6 @@ impl MergeView {
                     }
                 }
             }
-        }
-        for (_, cr) in cols.iter().skip(1) {
-            p.vline(cr.left(), r.y_range(), Stroke::new(1.0, pal.border));
         }
     }
 
@@ -1174,6 +1431,99 @@ impl MergeView {
     }
 }
 
+/// A keyboard key drawn as a small key cap.
+fn key_cap(ui: &mut Ui, key: &str, pal: &Palette) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(key.to_owned(), FontId::monospace(11.0), pal.text);
+    let size = vec2((galley.size().x + 8.0).max(18.0), 18.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
+    paint_key_cap(ui.painter(), rect, galley, pal);
+    resp
+}
+
+fn paint_key_cap(p: &egui::Painter, rect: Rect, galley: std::sync::Arc<egui::Galley>, pal: &Palette) {
+    p.rect_filled(rect.translate(vec2(0.0, 1.0)), 4.0, pal.border);
+    p.rect_filled(rect, 4.0, pal.bg);
+    p.rect_stroke(rect, 4.0, Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
+    p.galley(rect.center() - galley.size() / 2.0, galley, pal.text);
+}
+
+/// Button with a key cap and a label; tinted with `color` when selected.
+fn action_button(ui: &mut Ui, key: &str, label: &str, color: Color32, selected: bool, pal: &Palette) -> egui::Response {
+    let key_galley = ui.painter().layout_no_wrap(key.to_owned(), FontId::monospace(11.0), pal.text);
+    let text_color = if selected { color } else { pal.text };
+    let label_galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::proportional(12.5), text_color);
+    let cap_w = (key_galley.size().x + 8.0).max(18.0);
+    let gap = if label.is_empty() { 0.0 } else { 6.0 };
+    let size = vec2(8.0 + cap_w + gap + label_galley.size().x + 9.0, 28.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
+    let p = ui.painter();
+    let fill = if selected {
+        color.gamma_multiply(0.22)
+    } else if resp.hovered() {
+        pal.hover
+    } else {
+        Color32::TRANSPARENT
+    };
+    p.rect_filled(rect, 6.0, fill);
+    p.rect_stroke(rect, 6.0, Stroke::new(1.0, if selected { color } else { pal.border }), egui::StrokeKind::Inside);
+    let cap = Rect::from_min_size(pos2(rect.left() + 8.0, rect.center().y - 9.0), vec2(cap_w, 18.0));
+    paint_key_cap(p, cap, key_galley, pal);
+    p.galley(pos2(cap.right() + gap, rect.center().y - label_galley.size().y / 2.0), label_galley, text_color);
+    resp
+}
+
+/// Rounded, tinted label.
+fn pill(ui: &mut Ui, text: &str, color: Color32) {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::proportional(12.0), color);
+    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(16.0, 8.0), Sense::hover());
+    ui.painter().rect_filled(rect, rect.height() / 2.0, color.gamma_multiply(0.18));
+    ui.painter().rect_stroke(rect, rect.height() / 2.0, Stroke::new(1.0, color.gamma_multiply(0.6)), egui::StrokeKind::Inside);
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, color);
+}
+
+/// Thin progress bar for resolved conflicts.
+fn progress_bar(ui: &mut Ui, fraction: f32, pal: &Palette) {
+    let (rect, _) = ui.allocate_exact_size(vec2(64.0, 6.0), Sense::hover());
+    ui.painter().rect_filled(rect, 3.0, pal.border);
+    if fraction > 0.0 {
+        let done = rect.with_max_x(rect.left() + rect.width() * fraction.clamp(0.0, 1.0));
+        ui.painter().rect_filled(done, 3.0, pal.add_fg);
+    }
+}
+
+/// Short description of how a chunk ends up in the result.
+fn status_label(c: &crate::merge::Chunk, pal: &Palette) -> (String, Color32) {
+    match (c.kind, &c.resolution) {
+        (ChunkKind::Conflict, Resolution::Unresolved) => ("⚠ Conflict".to_owned(), pal.conflict),
+        (ChunkKind::Conflict, r) => (format!("✔ {}", describe(r)), resolution_color(r, pal)),
+        (_, r) if *r == default_resolution(c.kind) => (format!("Auto · {}", describe(r)), resolution_color(r, pal)),
+        (_, r) => (format!("✔ {}", describe(r)), resolution_color(r, pal)),
+    }
+}
+
+/// A band between `x0` and `x1` joining two vertical spans with smooth S-curves.
+fn paint_ribbon(p: &egui::Painter, x0: f32, x1: f32, left: (f32, f32), right: (f32, f32), fill: Color32, stroke: Stroke) {
+    const STEPS: usize = 16;
+    let ease = |t: f32| t * t * (3.0 - 2.0 * t);
+    let point = |t: f32, a: f32, b: f32| pos2(x0 + (x1 - x0) * t, a + (b - a) * ease(t));
+    let top: Vec<_> = (0..=STEPS).map(|i| point(i as f32 / STEPS as f32, left.0, right.0)).collect();
+    let bottom: Vec<_> = (0..=STEPS).map(|i| point(i as f32 / STEPS as f32, left.1, right.1)).collect();
+    let mut mesh = egui::Mesh::default();
+    for (t, b) in top.iter().zip(&bottom) {
+        mesh.colored_vertex(*t, fill);
+        mesh.colored_vertex(*b, fill);
+    }
+    for i in 0..STEPS as u32 {
+        let k = i * 2;
+        mesh.add_triangle(k, k + 1, k + 2);
+        mesh.add_triangle(k + 1, k + 3, k + 2);
+    }
+    p.add(mesh);
+    p.add(egui::Shape::line(top, stroke));
+    p.add(egui::Shape::line(bottom, stroke));
+}
+
 fn unresolved_conflicts_contents(ui: &mut Ui, file_name: &str, open: usize, error: Option<&str>) -> Option<bool> {
     let pal = crate::theme::palette(ui.ctx());
     ui.set_width(380.0_f32.min(ui.ctx().content_rect().width() - 80.0));
@@ -1236,6 +1586,34 @@ mod tests {
             assert_eq!(resolution_color(&Resolution::Local, pal), pal.del_fg);
             assert_eq!(resolution_color(&Resolution::Remote, pal), pal.add_fg);
         }
+    }
+
+    #[test]
+    fn shift_n_and_shift_p_cycle_through_unresolved_conflicts() {
+        let mut doc = view(Resolution::Unresolved).doc;
+        let mut resolved = doc.chunks[0].clone();
+        resolved.resolution = Resolution::Local;
+        doc.chunks.push(resolved);
+        doc.chunks.push(doc.chunks[0].clone());
+        // Conflicts at 0 (open), 2 (resolved), 3 (open).
+        let mut view = MergeView::new(doc, "merged.rs".into(), None,
+            ["Local".into(), "Base".into(), "Remote".into()], false);
+        assert_eq!(view.current, Some(0));
+        let ctx = egui::Context::default();
+        let mut settings = ViewSettings::default();
+        let mut press = |view: &mut MergeView, key: Key| {
+            let event = egui::Event::Key {
+                key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::SHIFT,
+            };
+            let mut output = ctx.run_ui(egui::RawInput { events: vec![event], ..Default::default() },
+                |ui| view.handle_keys(ui, &mut settings, 20.0));
+            output.textures_delta.clear();
+            view.current
+        };
+        assert_eq!(press(&mut view, Key::N), Some(3));
+        assert_eq!(press(&mut view, Key::N), Some(0), "wraps around");
+        assert_eq!(press(&mut view, Key::P), Some(3), "wraps backwards");
+        assert_eq!(press(&mut view, Key::P), Some(0));
     }
 
     #[test]

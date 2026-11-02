@@ -21,6 +21,9 @@ landing page is in `site/`.
 - **Contributions:** no code PRs, only prompt contributions in issues, which the
   maintainer runs. The project states it is created with the assistance of LLM agents.
 - **Platforms:** releases are macOS-only (universal). Linux/Windows only on request.
+  Linux must still build and run from source (zero warnings): agents use it for
+  headless screenshots via `scripts/capture-linux.sh` (Xvfb, xdotool, ImageMagick;
+  runtime needs `libxkbcommon-x11-0` and Mesa Vulkan/EGL, llvmpipe is fine).
 - **License:** MIT (`LICENSE`).
 
 ## Commands
@@ -36,6 +39,7 @@ scripts/bundle-macos.sh [universal] [--install]   # → target/release/bundle/Mi
 scripts/release.sh patch|minor|major|X.Y.Z        # bump, tag vX.Y.Z, push → CI release
 scripts/make-icons.sh                             # SVG → app/site icons + colours (resvg, macOS)
 scripts/screenshots.py                            # macOS native captures → site/img/ (880×520 pt)
+scripts/capture-linux.sh out.png 1400 820 [keys…] -- ARGS   # headless Linux capture
 ```
 
 ## Layout
@@ -171,6 +175,13 @@ scripts/screenshots.py                            # macOS native captures → si
   retain their output. Swapping unresolved marker blocks changes output and marks it unsaved.
   Merge inline emphasis reuses file-diff line pairing/word diffs, against Base in three-way
   merges or A/B without Base. Cached ranges follow source lines into the result and swap with inputs.
+  Merge columns are separated by Meld-style connector gutters (`GUTTER_W`): each change
+  draws a ribbon joining the neighbours' real line spans, solid when that input is
+  included, faint otherwise; the arrow disc at the input's top takes it (Mod-click
+  appends it after the other side). Chunk header rows show A+B/B+A/Base/Edit chips only
+  for the current or hovered change and open conflicts; other rows show status only.
+  A bottom focus bar (`FOCUS_BAR_H`) lists the current change's kind, every choice with
+  its key cap, `⇧N`/`⇧P` unresolved-conflict jumps, and a ready-to-save cue.
   Merge uses a gentle spotlight and step counter for the current change. Included inputs
   have labeled controls and full-chunk outlines (both for A+B/B+A, Base when selected).
   Clicking the unresolved-conflict count jumps to the next unresolved conflict, wrapping to the first.
