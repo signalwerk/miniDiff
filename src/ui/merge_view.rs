@@ -23,7 +23,7 @@ use crate::theme::Palette;
 type LineEmphasis = Vec<Vec<Range<usize>>>;
 
 /// Width of the connector gutter between two columns.
-const GUTTER_W: f32 = 30.0;
+const GUTTER_W: f32 = 36.0;
 /// Height of the action bar for the current change.
 const FOCUS_BAR_H: f32 = 44.0;
 
@@ -702,10 +702,15 @@ impl MergeView {
             let action = |ui: &mut Ui, key: &str, label: &str, short: &str, color: Color32, selected: bool, tip: &str| {
                 action_button(ui, key, if compact { short } else { label }, color, selected, pal).on_hover_text(tip).clicked()
             };
-            if action(ui, "a", "Use A", "A", pal.del_fg, res == Resolution::Local, "Take A (local)") {
+            let side = |ui: &mut Ui, key: &str, label: &str, short: &str, right: bool, color: Color32, selected: bool, tip: &str| {
+                action_button_arrow(ui, key, if compact { short } else { label }, Some(right), color, selected, pal)
+                    .on_hover_text(tip)
+                    .clicked()
+            };
+            if side(ui, "a", "Use A", "A", true, pal.del_fg, res == Resolution::Local, "Take A (local)") {
                 chosen = Some(Resolution::Local);
             }
-            if action(ui, "b", "Use B", "B", pal.add_fg, res == Resolution::Remote, "Take B (remote)") {
+            if side(ui, "b", "Use B", "B", false, pal.add_fg, res == Resolution::Remote, "Take B (remote)") {
                 chosen = Some(Resolution::Remote);
             }
             if action(ui, "3", "A then B", "A+B", pal.mod_fg, res == Resolution::LocalThenRemote, "Keep both, A first") {
@@ -714,7 +719,7 @@ impl MergeView {
             if action(ui, "4", "B then A", "B+A", pal.mod_fg, res == Resolution::RemoteThenLocal, "Keep both, B first") {
                 chosen = Some(Resolution::RemoteThenLocal);
             }
-            if self.doc.has_base && action(ui, "0", "Base", "Base", pal.text_dim, res == Resolution::Base, "Take the common ancestor") {
+            if self.doc.has_base && side(ui, "0", "Base", "Base", true, pal.text_dim, res == Resolution::Base, "Take the common ancestor") {
                 chosen = Some(Resolution::Base);
             }
             if action(ui, "e", "Edit…", "Edit", pal.accent, matches!(res, Resolution::Custom(_)), "Edit the result by hand") {
@@ -1100,7 +1105,10 @@ impl MergeView {
             let width = labels.map_or(galley.size().x, |labels| labels.into_iter()
                 .map(|label| p.layout_no_wrap(label.into(), font.clone(), color).size().x)
                 .fold(0.0, f32::max));
-            let w = width + 14.0;
+            // Side chips point at the result: A and base ▸ after the label, B ◂ before it.
+            let arrow = match salt { 1 | 3 => Some(true), 2 => Some(false), _ => None };
+            let arrow_w = if arrow.is_some() { 11.0 } else { 0.0 };
+            let w = width + 14.0 + arrow_w;
             // Side chips keep a fixed inset from the row edge.
             let top = if labels.is_some() { 4.0 } else { 3.0 };
             let rect = Rect::from_min_size(pos2(x, r.top() + top), vec2(w, r.height() - top - 3.0));
@@ -1122,7 +1130,13 @@ impl MergeView {
                 Stroke::new(1.0, if selected { color } else { pal.border }),
                 egui::StrokeKind::Inside,
             );
-            p.galley(pos2(rect.left() + 7.0, rect.center().y - galley.size().y / 2.0), galley, color);
+            let text_x = if arrow == Some(false) { rect.left() + 7.0 + arrow_w } else { rect.left() + 7.0 };
+            match arrow {
+                Some(true) => paint_triangle(p, pos2(rect.right() - 10.0, rect.center().y), true, color),
+                Some(false) => paint_triangle(p, pos2(rect.left() + 10.0, rect.center().y), false, color),
+                None => {}
+            }
+            p.galley(pos2(text_x, rect.center().y - galley.size().y / 2.0), galley, color);
             (x + w + 4.0, resp.clicked())
         };
 
@@ -1412,12 +1426,26 @@ fn paint_key_cap(p: &egui::Painter, rect: Rect, galley: std::sync::Arc<egui::Gal
 
 /// Button with a key cap and a label; tinted with `color` when selected.
 fn action_button(ui: &mut Ui, key: &str, label: &str, color: Color32, selected: bool, pal: &Palette) -> egui::Response {
+    action_button_arrow(ui, key, label, None, color, selected, pal)
+}
+
+/// [`action_button`] with an optional direction triangle (`Some(true)` = towards the right).
+fn action_button_arrow(
+    ui: &mut Ui,
+    key: &str,
+    label: &str,
+    arrow: Option<bool>,
+    color: Color32,
+    selected: bool,
+    pal: &Palette,
+) -> egui::Response {
     let key_galley = ui.painter().layout_no_wrap(key.to_owned(), FontId::monospace(11.0), pal.text);
     let text_color = if selected { color } else { pal.text };
     let label_galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::proportional(12.5), text_color);
     let cap_w = (key_galley.size().x + 8.0).max(18.0);
     let gap = if label.is_empty() { 0.0 } else { 6.0 };
-    let size = vec2(8.0 + cap_w + gap + label_galley.size().x + 9.0, 28.0);
+    let arrow_w = if arrow.is_some() { 12.0 } else { 0.0 };
+    let size = vec2(8.0 + cap_w + gap + label_galley.size().x + arrow_w + 9.0, 28.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
     let p = ui.painter();
@@ -1432,8 +1460,27 @@ fn action_button(ui: &mut Ui, key: &str, label: &str, color: Color32, selected: 
     p.rect_stroke(rect, 6.0, Stroke::new(1.0, if selected { color } else { pal.border }), egui::StrokeKind::Inside);
     let cap = Rect::from_min_size(pos2(rect.left() + 8.0, rect.center().y - 9.0), vec2(cap_w, 18.0));
     paint_key_cap(p, cap, key_galley, pal);
-    p.galley(pos2(cap.right() + gap, rect.center().y - label_galley.size().y / 2.0), label_galley, text_color);
+    let mut x = cap.right() + gap;
+    if arrow == Some(false) {
+        paint_triangle(p, pos2(x + 4.0, rect.center().y), false, color);
+        x += arrow_w;
+    }
+    let label_w = label_galley.size().x;
+    p.galley(pos2(x, rect.center().y - label_galley.size().y / 2.0), label_galley, text_color);
+    if arrow == Some(true) {
+        paint_triangle(p, pos2(x + label_w + 8.0, rect.center().y), true, color);
+    }
     resp
+}
+
+/// Small solid triangle centred on `c`, pointing right or left.
+fn paint_triangle(p: &egui::Painter, c: egui::Pos2, right: bool, color: Color32) {
+    let d = if right { 1.0 } else { -1.0 };
+    p.add(egui::Shape::convex_polygon(
+        vec![pos2(c.x + 3.5 * d, c.y), pos2(c.x - 2.5 * d, c.y - 4.0), pos2(c.x - 2.5 * d, c.y + 4.0)],
+        color,
+        Stroke::NONE,
+    ));
 }
 
 /// Rounded, tinted label.
@@ -1465,16 +1512,23 @@ fn status_label(c: &crate::merge::Chunk, pal: &Palette) -> (String, Color32) {
     }
 }
 
-/// One connector between `x0` and `x1`: a smooth, flat-ended S-curve from `y0` to `y1`.
+/// One connector between `x0` and `x1` from `y0` to `y1`: a cubic Bézier with
+/// horizontal tangents and long handles, so it leaves and enters each pane flat
+/// and swings through the middle with a springy S (Kaleidoscope style).
 fn paint_connector(p: &egui::Painter, x0: f32, x1: f32, y0: f32, y1: f32, stroke: Stroke) {
-    const STEPS: usize = 24;
-    let ease = |t: f32| t * t * (3.0 - 2.0 * t);
-    let points = (0..=STEPS)
-        .map(|i| {
-            let t = i as f32 / STEPS as f32;
-            pos2(x0 + (x1 - x0) * t, y0 + (y1 - y0) * ease(t))
-        })
-        .collect();
+    // Short straight lead-in/out, then handles reaching 75% across the remainder.
+    let lead = (x1 - x0) * 0.12;
+    let (a, b) = (x0 + lead, x1 - lead);
+    let handle = (b - a) * 0.75;
+    let curve = egui::epaint::CubicBezierShape::from_points_stroke(
+        [pos2(a, y0), pos2(a + handle, y0), pos2(b - handle, y1), pos2(b, y1)],
+        false,
+        Color32::TRANSPARENT,
+        stroke,
+    );
+    let mut points = vec![pos2(x0, y0)];
+    points.extend(curve.flatten(Some(0.1)));
+    points.push(pos2(x1, y1));
     p.add(egui::Shape::line(points, stroke));
 }
 

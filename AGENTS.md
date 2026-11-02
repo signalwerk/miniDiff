@@ -177,8 +177,8 @@ scripts/capture-linux.sh out.png 1400 820 [keys…] -- ARGS   # headless Linux c
   merges or A/B without Base. Cached ranges follow source lines into the result and swap with inputs.
   Merge columns are separated by Kaleidoscope-style connector gutters (`GUTTER_W`, code
   background). Per change and gutter: an edge bar on each side exactly as long as that
-  side's lines, and one flat-ended S-curve joining the two bars' centres (no fill, no
-  arrows). A side with no lines shows a coloured insertion line across its pane instead
+  side's lines, and one springy cubic Bézier (short straight lead-in/out, horizontal
+  handles at 75%) joining the two bars' centres (no fill, no arrows in the gutter). A side with no lines shows a coloured insertion line across its pane instead
   of a bar, and blank (unhatched) rows. Colour follows the gutter's input; open conflicts
   stay vivid, inputs a decision left out fade. Chunk header rows show A+B/B+A/Base/Edit chips only
   for the current or hovered change and open conflicts; other rows show status only.
@@ -188,6 +188,8 @@ scripts/capture-linux.sh out.png 1400 820 [keys…] -- ARGS   # headless Linux c
   have labeled controls ("✔ Included A") and solid connectors; the full-chunk outline
   boxes were removed for the cleaner Kaleidoscope look (maintainer request).
   Clicking the unresolved-conflict count jumps to the next unresolved conflict, wrapping to the first.
+  Side chips and the bottom bar's Use A / Use B / Base buttons carry small painted
+  triangles pointing at the result (A and Base ▸ after the label, B ◂ before it).
   Side chips reserve both Use/Included label widths and keep a fixed inset,
   so selection does not resize or move them.
   Don't stack unused-input dimming with the spotlight on unfocused chunks.
