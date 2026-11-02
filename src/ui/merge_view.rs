@@ -775,7 +775,7 @@ impl MergeView {
         } else {
             &[Col::Local, Col::Result, Col::Remote]
         };
-        // Connector gutters (Meld style) sit between neighbouring columns.
+        // Connector gutters sit between neighbouring columns.
         let gaps = (cols.len() - 1) as f32 * GUTTER_W;
         let w = ((rect.width() - gaps) / cols.len() as f32).max(1.0);
         cols.iter()
@@ -995,7 +995,7 @@ impl MergeView {
         }
     }
 
-    /// Kaleidoscope-style connectors. Each side of a gutter gets an edge bar as long as
+    /// Connectors. Each side of a gutter gets an edge bar as long as
     /// the change's lines (an insertion line across the pane when it has none), and one
     /// curve joins the two bars' centres. Solid when that input is in the result.
     fn paint_gutters(&self, p: &egui::Painter, range: &Range<usize>, top: f32, cols: &[(Col, Rect)], st: &CodeStyle) {
@@ -1514,7 +1514,7 @@ fn status_label(c: &crate::merge::Chunk, pal: &Palette) -> (String, Color32) {
 
 /// One connector between `x0` and `x1` from `y0` to `y1`: a cubic Bézier with
 /// horizontal tangents and long handles, so it leaves and enters each pane flat
-/// and swings through the middle with a springy S (Kaleidoscope style).
+/// and swings through the middle with a springy S.
 fn paint_connector(p: &egui::Painter, x0: f32, x1: f32, y0: f32, y1: f32, stroke: Stroke) {
     // Short straight lead-in/out, then handles reaching 75% across the remainder.
     let lead = (x1 - x0) * 0.12;

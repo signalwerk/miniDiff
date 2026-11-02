@@ -175,7 +175,7 @@ scripts/capture-linux.sh out.png 1400 820 [keys…] -- ARGS   # headless Linux c
   retain their output. Swapping unresolved marker blocks changes output and marks it unsaved.
   Merge inline emphasis reuses file-diff line pairing/word diffs, against Base in three-way
   merges or A/B without Base. Cached ranges follow source lines into the result and swap with inputs.
-  Merge columns are separated by Kaleidoscope-style connector gutters (`GUTTER_W`, code
+  Merge columns are separated by connector gutters (`GUTTER_W`, code
   background). Per change and gutter: an edge bar on each side exactly as long as that
   side's lines, and one springy cubic Bézier (short straight lead-in/out, horizontal
   handles at 75%) joining the two bars' centres (no fill, no arrows in the gutter). A side with no lines shows a coloured insertion line across its pane instead
@@ -186,7 +186,7 @@ scripts/capture-linux.sh out.png 1400 820 [keys…] -- ARGS   # headless Linux c
   its key cap, `⇧N`/`⇧P` unresolved-conflict jumps, and a ready-to-save cue.
   Merge uses a gentle spotlight and step counter for the current change. Included inputs
   have labeled controls ("✔ Included A") and solid connectors; the full-chunk outline
-  boxes were removed for the cleaner Kaleidoscope look (maintainer request).
+  boxes were removed on purpose (maintainer request).
   Clicking the unresolved-conflict count jumps to the next unresolved conflict, wrapping to the first.
   Side chips and the bottom bar's Use A / Use B / Base buttons carry small painted
   triangles pointing at the result (A and Base ▸ after the label, B ◂ before it).
