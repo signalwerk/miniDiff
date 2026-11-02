@@ -12,7 +12,7 @@ use egui::{
     Ui, UiBuilder, Vec2, pos2, vec2,
 };
 
-use super::code::{CodeStyle, line_job, paint_filler, paint_job, paint_line_number, ChangeSides, paint_change_marker};
+use super::code::{CodeStyle, line_job, paint_job, paint_line_number, ChangeSides, paint_change_marker};
 use super::{ViewSettings, icon_button, keys_free, toggle, toolbar_frame, dialog_modal, dialog_footer};
 use crate::highlight::{Highlights, highlight};
 use crate::diff::{DiffOptions, diff_docs};
@@ -932,23 +932,12 @@ impl MergeView {
             let has_focus = self.current.is_some();
             if c.is_change() {
                 for (col, cr) in &cols {
-                    let color = match col {
-                        Col::Local => pal.del_fg,
-                        Col::Remote => pal.add_fg,
-                        Col::Base => pal.text_dim,
-                        Col::Result => continue,
-                    };
+                    if *col == Col::Result {
+                        continue;
+                    }
                     let cell = Rect::from_x_y_ranges(cr.x_range(), r.y_range());
-                    if includes(&c.resolution, *col) {
-                        p.vline(cell.left() + 1.0, cell.y_range(), Stroke::new(2.0, color));
-                        p.vline(cell.right() - 1.0, cell.y_range(), Stroke::new(2.0, color));
-                        if idx == 0 || self.items[idx - 1].chunk() != ci {
-                            p.hline(cell.x_range(), cell.top() + 1.0, Stroke::new(2.0, color));
-                        }
-                        if idx + 1 == self.items.len() || self.items[idx + 1].chunk() != ci {
-                            p.hline(cell.x_range(), cell.bottom() - 1.0, Stroke::new(2.0, color));
-                        }
-                    } else if c.resolution != Resolution::Unresolved && (focused || !has_focus) {
+                    // Inclusion shows in the chip label and the solid connector lines.
+                    if !includes(&c.resolution, *col) && c.resolution != Resolution::Unresolved && (focused || !has_focus) {
                         // Avoid stacking this with the spotlight dim on other chunks.
                         p.rect_filled(cell, 0.0, dim_color(pal, 50));
                     }
@@ -1023,7 +1012,7 @@ impl MergeView {
             .map(|w| (w[0].0, w[1].0, Rect::from_x_y_ranges(w[0].1.right()..=w[1].1.left(), y_range.clone())))
             .collect();
         for (_, _, g) in &gutters {
-            p.rect_filled(*g, 0.0, pal.gutter_bg);
+            p.rect_filled(*g, 0.0, pal.bg);
             p.vline(g.left(), g.y_range(), Stroke::new(1.0, pal.border));
             p.vline(g.right(), g.y_range(), Stroke::new(1.0, pal.border));
         }
@@ -1040,6 +1029,19 @@ impl MergeView {
                 Col::Remote => c.remote.len(),
                 Col::Result => self.result_lens[ci],
             } as f32;
+            // A side without lines shows where the change would go (Kaleidoscope style).
+            for (col, cr) in cols {
+                if len(*col) > 0.0 {
+                    continue;
+                }
+                let color = match col {
+                    Col::Local => pal.del_fg,
+                    Col::Remote => pal.add_fg,
+                    Col::Base => pal.text_dim,
+                    Col::Result => resolution_color(&c.resolution, pal),
+                };
+                p.hline(cr.x_range(), first_line + 1.0, Stroke::new(1.5, color));
+            }
             for &(left, right, g) in &gutters {
                 // The input side of this gutter: whatever is not the result.
                 let input = if left == Col::Result { right } else { left };
@@ -1054,14 +1056,14 @@ impl MergeView {
                     _ => pal.text_dim,
                 };
                 let included = includes(&c.resolution, input);
-                let (fill, stroke) = if included {
-                    (color.gamma_multiply(if pal.dark { 0.30 } else { 0.24 }), Stroke::new(1.5, color))
+                let stroke = if included {
+                    Stroke::new(1.5, color)
                 } else {
-                    (color.gamma_multiply(0.10), Stroke::new(1.0, color.gamma_multiply(0.5)))
+                    Stroke::new(1.0, color.gamma_multiply(0.55))
                 };
                 let (l0, l1) = (first_line, first_line + len(left) * row_h);
                 let (r0, r1) = (first_line, first_line + len(right) * row_h);
-                paint_ribbon(p, g.left(), g.right(), (l0, l1), (r0, r1), fill, stroke);
+                paint_connector(p, g.left(), g.right(), (l0, l1), (r0, r1), stroke);
 
                 if input == Col::Result {
                     continue;
@@ -1136,7 +1138,7 @@ impl MergeView {
                 .map(|label| p.layout_no_wrap(label.into(), font.clone(), color).size().x)
                 .fold(0.0, f32::max));
             let w = width + 14.0;
-            // The selected outline occupies the first two points of the row.
+            // Side chips keep a fixed inset from the row edge.
             let top = if labels.is_some() { 4.0 } else { 3.0 };
             let rect = Rect::from_min_size(pos2(x, r.top() + top), vec2(w, r.height() - top - 3.0));
             let resp = ui
@@ -1284,9 +1286,7 @@ impl MergeView {
             }
         };
         if k >= len {
-            if change {
-                paint_filler(p, rect, st);
-            }
+            // Shorter sides stay blank; the insertion line marks where content would go.
             return;
         }
         if let Some(bg) = bg {
@@ -1502,26 +1502,26 @@ fn status_label(c: &crate::merge::Chunk, pal: &Palette) -> (String, Color32) {
     }
 }
 
-/// A band between `x0` and `x1` joining two vertical spans with smooth S-curves.
-fn paint_ribbon(p: &egui::Painter, x0: f32, x1: f32, left: (f32, f32), right: (f32, f32), fill: Color32, stroke: Stroke) {
-    const STEPS: usize = 16;
+/// Thin connector lines between `x0` and `x1` joining the edges of two vertical
+/// spans with smooth, flat-ended S-curves (Kaleidoscope style).
+fn paint_connector(p: &egui::Painter, x0: f32, x1: f32, left: (f32, f32), right: (f32, f32), stroke: Stroke) {
+    const STEPS: usize = 20;
     let ease = |t: f32| t * t * (3.0 - 2.0 * t);
-    let point = |t: f32, a: f32, b: f32| pos2(x0 + (x1 - x0) * t, a + (b - a) * ease(t));
-    let top: Vec<_> = (0..=STEPS).map(|i| point(i as f32 / STEPS as f32, left.0, right.0)).collect();
-    let bottom: Vec<_> = (0..=STEPS).map(|i| point(i as f32 / STEPS as f32, left.1, right.1)).collect();
-    let mut mesh = egui::Mesh::default();
-    for (t, b) in top.iter().zip(&bottom) {
-        mesh.colored_vertex(*t, fill);
-        mesh.colored_vertex(*b, fill);
+    let curve = |a: f32, b: f32| -> Vec<egui::Pos2> {
+        (0..=STEPS)
+            .map(|i| {
+                let t = i as f32 / STEPS as f32;
+                pos2(x0 + (x1 - x0) * t, a + (b - a) * ease(t))
+            })
+            .collect()
+    };
+    // An empty side's insertion line sits just below the chunk header.
+    let edge = |(top, bottom): (f32, f32)| if top == bottom { (top + 1.0, bottom + 1.0) } else { (top, bottom) };
+    let (left, right) = (edge(left), edge(right));
+    p.add(egui::Shape::line(curve(left.0, right.0), stroke));
+    if left.1 != left.0 || right.1 != right.0 {
+        p.add(egui::Shape::line(curve(left.1, right.1), stroke));
     }
-    for i in 0..STEPS as u32 {
-        let k = i * 2;
-        mesh.add_triangle(k, k + 1, k + 2);
-        mesh.add_triangle(k + 1, k + 3, k + 2);
-    }
-    p.add(mesh);
-    p.add(egui::Shape::line(top, stroke));
-    p.add(egui::Shape::line(bottom, stroke));
 }
 
 fn unresolved_conflicts_contents(ui: &mut Ui, file_name: &str, open: usize, error: Option<&str>) -> Option<bool> {
