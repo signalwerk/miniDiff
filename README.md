@@ -21,6 +21,10 @@ A native diff and merge tool for **text files and folders**, built in Rust with
 - **Merge**: a three-way merge (diff3) with columns A · Result · B (plus Base on request).
   - Non-conflicting changes are merged automatically.
   - For each conflict you choose A, B, A+B, B+A or Base, or edit the result by hand.
+  - Connector lines between the columns link each change in A and B to its place in
+    the result; sides a decision left out fade.
+  - A bar at the bottom lists every choice for the current change with its key,
+    and jumps to the next unresolved conflict.
   - It also reads files that already contain git conflict markers.
 - **Ways in**:
   - Drop two items onto the window. On macOS, you can also drop them onto the app icon.
@@ -41,7 +45,7 @@ supported: MiniDiff only reports whether they are identical. Images might become
 an exception in the future, but no requests for them are accepted at the moment.
 
 **Platforms:** MiniDiff uses a cross-platform Rust UI toolkit. Published releases
-currently provide macOS builds; Linux and Windows ports and testing are welcome.
+provide macOS (universal) and Linux (x86_64) builds; Windows ports and testing are welcome.
 [Open a GitHub issue](https://github.com/signalwerk/miniDiff/issues) to request a
 build, report what works on your platform, or suggest a porting change through
 the [prompt contribution workflow](#contributing).
@@ -62,9 +66,26 @@ On startup MiniDiff checks for new releases. When one is available, an
 SHA-256, replaces the app and restarts it. Automatic checks can be turned off
 in **MiniDiff → Preferences…** (shown as **Settings…** on recent macOS versions).
 
+### Linux
+
+1. Download [MiniDiff-linux-x86_64.tar.gz](https://github.com/signalwerk/miniDiff/releases/latest/download/MiniDiff-linux-x86_64.tar.gz) from [GitHub Releases](https://github.com/signalwerk/miniDiff/releases/latest).
+2. Unpack it and put `MiniDiff/minidiff` on your `PATH`, for example:
+
+   ```sh
+   tar xzf MiniDiff-linux-x86_64.tar.gz
+   install -Dm755 MiniDiff/minidiff ~/.local/bin/minidiff
+   install -Dm644 MiniDiff/minidiff.png ~/.local/share/icons/hicolor/256x256/apps/minidiff.png
+   install -Dm644 MiniDiff/minidiff.desktop ~/.local/share/applications/minidiff.desktop
+   ```
+
+The window needs `libxkbcommon-x11-0` (X11) and a Vulkan or EGL driver, such as
+Mesa (`mesa-vulkan-drivers`). The Linux build does not update itself; download new
+releases from GitHub. From a source checkout, `scripts/package-linux.sh --install`
+builds the same archive and installs it into `~/.local`.
+
 ### Other platforms
 
-Prebuilt Linux and Windows releases are not currently published. To try a source
+Prebuilt Windows releases are not currently published. To try a source
 build, install Rust and your platform's native build tools, then run:
 
 ```sh
@@ -73,8 +94,8 @@ cargo build --release
 
 The executable is `target/release/minidiff` (`minidiff.exe` on Windows).
 Native dependencies and platform integration may need additional work; please
-share build issues and testing results in a GitHub issue. The bundle installer
-and self-updater currently target macOS.
+share build issues and testing results in a GitHub issue. The self-updater
+currently targets macOS.
 
 ## Use from Tower
 
@@ -153,6 +174,7 @@ Option (`⌥`) on macOS and Alt elsewhere.
 | Toggle file list | `b` |
 | Merge: take A / B / A+B / B+A / base | `a` `b` / `3` `4` / `0` |
 | Merge: edit / reset chunk | `e` / `r` |
+| Merge: next / previous unresolved conflict | `Shift+N` / `Shift+P` |
 | Save merge | `Mod+S` |
 | New window / close window | `Mod+N` / `Mod+W` |
 | Swap sides / reload / start screen | `Mod+Shift+S` / `Mod+R` / `Mod+O` |
@@ -179,6 +201,10 @@ cargo build --release
 cargo test
 cargo clippy
 ```
+
+On Linux, `scripts/package-linux.sh` builds the release archive and
+`scripts/capture-linux.sh` renders a view headlessly with Xvfb, for screenshots
+without a display. CI checks the Linux build (clippy and tests) on every push.
 
 For macOS app bundles:
 

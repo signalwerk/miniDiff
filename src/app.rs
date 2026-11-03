@@ -1158,6 +1158,7 @@ fn help_shortcuts(ui: &mut Ui) {
             ui.add_space(18.0);
             shortcut_section(ui, "Merge", &[
                 ("Take A / B", "a / b · 1 / 2".into()),
+                ("Next / previous unresolved conflict", "⇧N / ⇧P".into()),
                 ("Combine A+B / B+A", "3 / 4".into()),
                 ("Take base", "0".into()),
                 ("Edit / reset chunk", "e / r".into()),
